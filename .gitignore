@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+._*
+
+# Arduino 编译产物
+build/
+*.hex
+*.elf
+*.bin
+*.map
+
+# 编辑器临时文件
+*.swp
+*.swo
+*~
