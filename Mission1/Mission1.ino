@@ -35,7 +35,7 @@ void setup() {
   fArm.attach(9);
   delay(200);
 
-  claw.attach(6);
+  claw.attach(5);
   delay(200);
   
   Serial.begin(9600);  //串口波特率
