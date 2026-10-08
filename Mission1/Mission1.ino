@@ -64,11 +64,79 @@ void armDataCmd(char serialCmd) {
   if(serialCmd == 'b' || serialCmd == 'r' || serialCmd == 'f' || serialCmd == 'c') {
     servoData = Serial.parseInt();
     servoCmd(serialCmd,servoData,DSD);
+  } else if(serialCmd == 'x') {
+    servoData = Serial.parseInt();
+    servoCmd('b',servoData,DSD);
+    servoData = Serial.parseInt();
+    servoCmd('r',servoData,DSD);
+    servoData = Serial.parseInt();
+    servoCmd('f',servoData,DSD);
+    char clear;
+    while(Serial.available()>0) clear = Serial.read();
+    Serial.println();
   } else {
-    Serial.println("Unknown Command.");
+    switch(serialCmd) {
+
+      case 'O': //机械臂爪子张开
+        Serial.println("Received Command:Claw Open");
+        clawPos = clawMax;
+        servoCmd('c',clawPos,DSD);
+        break;
+      case 'S': //机械臂爪子关闭
+        Serial.println("Received Command:Claw Close");
+        clawPos = clawMin;
+        servoCmd('c',clawPos,DSD);
+        break;
+      case 'H': //提升机械臂整体运行速度
+        Serial.println("Received Command:Speed Higher");
+        DSD -= 3;
+        if(DSD <= 9) {
+          DSD = 9;
+          Serial.println("Servo Speed is Too High.");
+        } else if(DSD >= 45) {
+          DSD = 45;
+          Serial.println("Servo Speed is Too Low.");
+        }
+        break;
+      case 'L': //降低机械臂整体运行速度
+        Serial.println("Received Command:Speed Lower");
+        DSD += 3;
+        if(DSD <= 9) {
+          DSD = 9;
+          Serial.println("Servo Speed is Too High.");
+        } else if(DSD >= 45) {
+          DSD = 45;
+          Serial.println("Servo Speed is Too Low.");
+        }
+        break;
+
+      case '?':
+        reportStatus();
+        break;
+      case 'I':
+        armIniPos();
+        break;
+
+      default:
+        Serial.println("Unknown Command.");
+
+    }
   }
 }
 
+void reportStatus() {
+
+  Serial.println();
+  Serial.println();
+  Serial.println("+ Robot-Arm Status Report +");
+  Serial.print("Claw Position:"); Serial.println(claw.read());
+  Serial.print("Rear Arm Position:"); Serial.println(rArm.read());
+  Serial.print("Front Arm Position:"); Serial.println(fArm.read());
+  Serial.print("Base Position:"); Serial.println(base.read());
+  Serial.println("++++++++++++++++++");
+  Serial.println(" ");
+
+}
 
 void servoCmd(char servoName,int toPos,int servoDelay)
 {
@@ -140,4 +208,17 @@ void servoCmd(char servoName,int toPos,int servoDelay)
 
 }
 
+void armIniPos() {
+  Serial.println("+Command:Restore Initial Position.");
+  int robotIniPosArray[4][3] = {
+    {'b',90,DSD},
+    {'r',90,DSD},
+    {'f',90,DSD},
+    {'c',90,DSD}
+  };
+
+  for(int i = 0;i < 4;i++) {
+    servoCmd(robotIniPosArray[i][0],robotIniPosArray[i][1],robotIniPosArray[i][2]);
+  }
+}
 
