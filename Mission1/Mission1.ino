@@ -23,9 +23,19 @@ int speedScale = 100;
 
 int DSD = 15; //Default Servo Delay 默认电机运动延迟时间
 
+bool mode = 1; //mode = 1: 指令模式，mode = 0: 摇杆模式
+
+int moveStep = 3; //摇动摇杆时每次改变的角度
+
+const int JOY_A0_MIN = 0, JOY_A0_MAX = 1023;   // 左摇杆 横  -> 底座
+const int JOY_A1_MIN = 0, JOY_A1_MAX = 1023;   // 左摇杆 纵  -> 后臂
+const int JOY_A2_MIN = 0, JOY_A2_MAX = 1023;   // 右摇杆 纵  -> 前臂
+const int JOY_A3_MIN = 0, JOY_A3_MAX = 1023;   // 右摇杆 横  -> 爪子
+
 
 void setup() {
 
+  mode = 1;
   base.attach(11);
   delay(200);
 
@@ -40,6 +50,9 @@ void setup() {
   
   Serial.begin(9600);  //串口波特率
   Serial.println("Start!");
+  if(mode) {
+    Serial.println("Now is Command Mode.");
+  }
 
 }
 
@@ -49,14 +62,18 @@ void loop() {
     armDataCmd(serialCmd);
   }
 
-  base.write(basePos);
-  delay(10);
-  rArm.write(rArmPos);
-  delay(10);
-  fArm.write(fArmPos);
-  delay(10);
-  claw.write(clawPos);
-  delay(10);
+  if(!mode) {
+    joyCtrl();
+    base.write(basePos);
+    delay(10);
+    rArm.write(rArmPos);
+    delay(10);
+    fArm.write(fArmPos);
+    delay(10);
+    claw.write(clawPos);
+    delay(10);
+  }
+
 }
 
 void armDataCmd(char serialCmd) {
@@ -110,6 +127,14 @@ void armDataCmd(char serialCmd) {
         }
         break;
 
+      case 'M': //指令模式 / 摇杆模式 切换
+        mode = !mode;
+        if(mode) {
+          Serial.println("Now is Command Mode.");
+        } else {
+          Serial.println("Now is Joystick Mode.");
+        }
+        break;
       case '?':
         reportStatus();
         break;
@@ -137,6 +162,24 @@ void reportStatus() {
   Serial.println(" ");
 
 }
+
+// ------------------------------------------------------------
+//  joyCtrl —— 读四个摇杆轴，映射成四个关节的目标角度
+// ------------------------------------------------------------
+void joyCtrl() {
+  basePos = map(analogRead(A0), JOY_A0_MIN, JOY_A0_MAX, baseMin, baseMax);
+  basePos = constrain(basePos, baseMin, baseMax);
+
+  rArmPos = map(analogRead(A1), JOY_A1_MIN, JOY_A1_MAX, rArmMin, rArmMax);
+  rArmPos = constrain(rArmPos, rArmMin, rArmMax);
+
+  fArmPos = map(analogRead(A2), JOY_A2_MIN, JOY_A2_MAX, fArmMin, fArmMax);
+  fArmPos = constrain(fArmPos, fArmMin, fArmMax);
+
+  clawPos = map(analogRead(A3), JOY_A3_MIN, JOY_A3_MAX, clawMin, clawMax);
+  clawPos = constrain(clawPos, clawMin, clawMax);
+}
+
 
 void servoCmd(char servoName,int toPos,int servoDelay)
 {
