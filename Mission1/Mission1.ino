@@ -37,15 +37,19 @@ void setup() {
 
   mode = 1;
   base.attach(11);
+  base.write(90);
   delay(200);
 
   rArm.attach(10);
+  rArm.write(90);
   delay(200);
 
   fArm.attach(9);
+  fArm.write(90);
   delay(200);
 
   claw.attach(5);
+  claw.write(90);
   delay(200);
   
   Serial.begin(9600);  //串口波特率
