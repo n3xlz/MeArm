@@ -19,8 +19,6 @@ const int fArmMax = 130;
 const int clawMin = 25;
 const int clawMax = 110;
 
-int speedScale = 100;
-
 int DSD = 15; //Default Servo Delay 默认电机运动延迟时间
 
 // ============================================================
@@ -163,10 +161,7 @@ int cycleIdx = 0;                // 按键1 循环到第几个物体：0=A 1=B 2
 //    代价：单击会有大约 0.4 秒延迟才响应，这是物理规律，不是 bug。
 // ============================================================
 
-// 两个摇杆按键接在哪根引脚上
-//   ⚠ 这两行【待实测确认】。我按 meArm 摇杆板的通用设计填了 D2 / D4，
-//     没把握 —— 发 'K' 进探测模式，按一下摇杆，串口会告诉你真实引脚号，
-//     回来把这两个数字改掉即可。
+// 两个摇杆按键的引脚（2026-10-12 实测确认）
 const byte BTN_PIN[2] = { 2, 4 };            // [0]=左摇杆按键  [1]=右摇杆按键
 
 const unsigned long BTN_DEBOUNCE_MS = 25;    // 消抖：电平要稳定这么久才算数
@@ -183,14 +178,6 @@ struct BtnState {
 };
 
 BtnState btn[2];
-
-// —— 按键引脚探测（发 'K' 开关）——
-// 候选引脚：排除已占用的 D5/D9/D10/D11（四个舵机）、A0~A3（摇杆四个轴）、
-// D0/D1（串口）。剩下这些里面，哪个按下时变 LOW，哪个就是摇杆按键。
-const byte PROBE_PINS[] = { 2, 3, 4, 6, 7, 8, A4, A5 };
-const byte PROBE_N = sizeof(PROBE_PINS) / sizeof(PROBE_PINS[0]);
-
-bool probeMode = false;          // 是否处于引脚探测模式
 
 
 void setup() {
@@ -221,12 +208,6 @@ void setup() {
     btn[i].stable  = HIGH;
   }
 
-  // —— 探测用的候选引脚，同样拉上 ——
-  // 发 'K' 进探测模式才会真正用到；平时它们只是安静地读着 HIGH。
-  for(byte i = 0; i < PROBE_N; i++) {
-    pinMode(PROBE_PINS[i], INPUT_PULLUP);
-  }
-
   Serial.begin(9600);  //串口波特率
   Serial.println(F("Start!"));
   Serial.println(F("Command Ready / Joystick ON"));
@@ -253,10 +234,7 @@ void loop() {
   //    所以录制期间 loop 照常转、摇杆照样能操控（按键2 要的就是这个）
   recordTick();
 
-  // ⑤ 按键引脚探测：只有发过 'K' 之后才真正干活，平时一句都不执行
-  probeTick();
-
-  // ⑥ 把四个目标角度推向舵机
+  // ⑤ 把四个目标角度推向舵机
   updateServos();
 
 }
@@ -351,15 +329,6 @@ void armDataCmd(char serialCmd) {
       case 'Z':   // 按键4：回中（等同于已有的 I 命令）
         Serial.println(F("Received Command:Go Home"));
         armIniPos();
-        break;
-
-      // ---- 调试用：按键引脚探测 ----
-      case 'K':
-        probeMode = !probeMode;
-        Serial.print(F("Pin probe "));
-        Serial.println(probeMode ? F("ON  - 按一下摇杆按键，看串口打印哪个引脚；再发 K 退出")
-                                 : F("OFF"));
-        resetButtons();     // 进出探测模式都清一次账，别让积压的点击漏出去
         break;
 
       default:
@@ -759,7 +728,6 @@ void playRecord() {
 //  这也是为什么单击按下后要过约 0.4 秒才有反应。
 // ------------------------------------------------------------
 void scanButtons() {
-  if(probeMode) return;   // 探测模式下不判手势，否则一按摇杆功能就被触发了
   unsigned long now = millis();
 
   for(byte i = 0; i < 2; i++) {
@@ -843,28 +811,5 @@ void resetButtons() {
     btn[i].clicks  = 0;
     btn[i].chgMs   = millis();
     btn[i].relMs   = millis();
-  }
-}
-
-
-// ------------------------------------------------------------
-//  probeTick —— 按键引脚探测（发 'K' 开关）
-//
-//  不确定摇杆按键接在哪根引脚上时用它：发 'K' 进探测模式，
-//  然后按一下摇杆按键，串口打印出来的引脚号就是它。
-//
-//  为什么需要这个：摇杆按键的引脚各家板子不一样，代码里那两个
-//  数字填错了，现象是"按了完全没反应"—— 和"代码写错"长得一模一样，
-//  很难分辨。有个能直接问引脚的工具，就不用猜了。
-// ------------------------------------------------------------
-void probeTick() {
-  if(!probeMode) return;
-
-  for(byte i = 0; i < PROBE_N; i++) {
-    if(digitalRead(PROBE_PINS[i]) == LOW) {
-      Serial.print(F("+PROBE: LOW on pin "));
-      Serial.println(PROBE_PINS[i]);
-      delay(300);              // 同一根引脚别刷屏
-    }
   }
 }
