@@ -145,6 +145,54 @@ unsigned long recLastMs = 0;     // 上一帧的时间戳（配合 millis() 用�
 int cycleIdx = 0;                // 按键1 循环到第几个物体：0=A 1=B 2=C
 
 
+// ============================================================
+//  任务三的"按键"从哪来 —— 复用两个摇杆自带的按压开关
+// ------------------------------------------------------------
+//  不需要额外按键板：把摇杆帽垂直往下按，"嗒"一下就是一个按键。
+//  左右各一个，再用"按几下"组合出 4 种手势 = 任务要的 4 个按键：
+//
+//      左摇杆 单击  ->  按键1  循环夹取（A -> B -> C -> A）
+//      右摇杆 单击  ->  按键2  录制 开始 / 结束
+//      左摇杆 双击  ->  按键3  播放上一次录制
+//      右摇杆 双击  ->  按键4  回中
+//
+//  【整套东西的难点只有一个】
+//    第一次松手的那一刻，单片机并不知道这是"单击"，还是"双击"的
+//    前半截 —— 它必须停下来等一小会儿（双击窗口 350ms）。窗口内
+//    没有第二次按下，才敢确认是单击。scanButtons() 干的就是这件事。
+//    代价：单击会有大约 0.4 秒延迟才响应，这是物理规律，不是 bug。
+// ============================================================
+
+// 两个摇杆按键接在哪根引脚上
+//   ⚠ 这两行【待实测确认】。我按 meArm 摇杆板的通用设计填了 D2 / D4，
+//     没把握 —— 发 'K' 进探测模式，按一下摇杆，串口会告诉你真实引脚号，
+//     回来把这两个数字改掉即可。
+const byte BTN_PIN[2] = { 2, 4 };            // [0]=左摇杆按键  [1]=右摇杆按键
+
+const unsigned long BTN_DEBOUNCE_MS = 25;    // 消抖：电平要稳定这么久才算数
+const unsigned long BTN_DOUBLE_MS   = 350;   // 双击窗口：两次点击间隔小于它算双击
+
+// 每个按键的"状态盒子" —— 判断手势要用到的东西打包成一个整体。
+// （跟 Servo 一样：struct 就是把几个相关变量捆成一个，用起来更不容易搞错）
+struct BtnState {
+  bool          lastRaw;   // 上一次读到的原始电平
+  bool          stable;    // 消抖后确认的稳定电平（LOW = 按着）
+  unsigned long chgMs;     // 电平开始变化的时刻（消抖计时用）
+  byte          clicks;    // 已经累计了几次点击
+  unsigned long relMs;     // 最后一次松手的时刻（双击窗口计时用）
+};
+
+BtnState btn[2];
+
+// —— 按键引脚探测（发 'K' 开关）——
+// 候选引脚：排除已占用的 D5/D9/D10/D11（四个舵机）、A0~A3（摇杆四个轴）、
+// D0/D1（串口）。剩下这些里面，哪个按下时变 LOW，哪个就是摇杆按键。
+const byte PROBE_PINS[] = { 2, 3, 4, 6, 7, 8, A4, A5 };
+const byte PROBE_N = sizeof(PROBE_PINS) / sizeof(PROBE_PINS[0]);
+
+bool probeMode = false;          // 是否处于引脚探测模式
+
+
 void setup() {
 
   joyOn = true;
@@ -164,6 +212,21 @@ void setup() {
   claw.write(90);
   delay(200);
   
+  // —— 摇杆按键初始化 ——
+  // INPUT_PULLUP：引脚内部接一个上拉电阻。没按下时读 HIGH，
+  // 按下去（按键把引脚拉到 GND）读 LOW。这样外面不需要再焊电阻。
+  for(byte i = 0; i < 2; i++) {
+    pinMode(BTN_PIN[i], INPUT_PULLUP);
+    btn[i].lastRaw = HIGH;
+    btn[i].stable  = HIGH;
+  }
+
+  // —— 探测用的候选引脚，同样拉上 ——
+  // 发 'K' 进探测模式才会真正用到；平时它们只是安静地读着 HIGH。
+  for(byte i = 0; i < PROBE_N; i++) {
+    pinMode(PROBE_PINS[i], INPUT_PULLUP);
+  }
+
   Serial.begin(9600);  //串口波特率
   Serial.println(F("Start!"));
   Serial.println(F("Command Ready / Joystick ON"));
@@ -177,16 +240,23 @@ void loop() {
     armDataCmd(serialCmd);
   }
 
-  // ② 摇杆：每一轮都读。
+  // ② 摇杆按键：识别单击 / 双击，识别到就触发对应功能。
+  //    同样是非阻塞的 —— 只读电平 + 看 millis()，一次 delay 都不打
+  scanButtons();
+
+  // ③ 摇杆：每一轮都读。
   //    摇杆居中时它什么都不改，所以刚发完的指令位置会被原样保留下来
   joyCtrl();
 
-  // ③ 录制采样：如果正在录，每 FRAME_MS 存一帧当前姿态
+  // ④ 录制采样：如果正在录，每 FRAME_MS 存一帧当前姿态
   //    它是【非阻塞】的 —— 靠 millis() 看有没有到点，不用 delay 死等，
   //    所以录制期间 loop 照常转、摇杆照样能操控（按键2 要的就是这个）
   recordTick();
 
-  // ④ 把四个目标角度推向舵机
+  // ⑤ 按键引脚探测：只有发过 'K' 之后才真正干活，平时一句都不执行
+  probeTick();
+
+  // ⑥ 把四个目标角度推向舵机
   updateServos();
 
 }
@@ -281,6 +351,15 @@ void armDataCmd(char serialCmd) {
       case 'Z':   // 按键4：回中（等同于已有的 I 命令）
         Serial.println(F("Received Command:Go Home"));
         armIniPos();
+        break;
+
+      // ---- 调试用：按键引脚探测 ----
+      case 'K':
+        probeMode = !probeMode;
+        Serial.print(F("Pin probe "));
+        Serial.println(probeMode ? F("ON  - 按一下摇杆按键，看串口打印哪个引脚；再发 K 退出")
+                                 : F("OFF"));
+        resetButtons();     // 进出探测模式都清一次账，别让积压的点击漏出去
         break;
 
       default:
@@ -660,4 +739,132 @@ void playRecord() {
   clawPos = cc;
 
   Serial.println(F("+PLAY DONE"));
+}
+
+
+// ============================================================
+//  任务三：摇杆按键的手势识别
+// ============================================================
+
+// ------------------------------------------------------------
+//  scanButtons —— 把"电平抖动"翻译成"单击 / 双击"
+//
+//  对左右两个按键各做三步：
+//    ① 电平跟上一次不一样 -> 记下"从这一刻开始变"，消抖计时重新起
+//    ② 稳定超过 25ms     -> 承认它真的变了。按下就 +1 次点击
+//    ③ 手松开、且双击窗口（350ms）走完 -> 现在才能定性：
+//         累计 1 次 = 单击      累计 2 次 = 双击
+//
+//  第 ③ 步是整件事的关键：单片机必须"等一等"才能分辨单双击。
+//  这也是为什么单击按下后要过约 0.4 秒才有反应。
+// ------------------------------------------------------------
+void scanButtons() {
+  if(probeMode) return;   // 探测模式下不判手势，否则一按摇杆功能就被触发了
+  unsigned long now = millis();
+
+  for(byte i = 0; i < 2; i++) {
+
+    bool raw = digitalRead(BTN_PIN[i]);
+
+    // ① 电平动了，重新起算消抖
+    if(raw != btn[i].lastRaw) {
+      btn[i].lastRaw = raw;
+      btn[i].chgMs   = now;
+    }
+
+    // ② 稳定够久，才承认它真变了
+    if(now - btn[i].chgMs >= BTN_DEBOUNCE_MS && raw != btn[i].stable) {
+      btn[i].stable = raw;
+      if(raw == LOW) {
+        btn[i].clicks++;         // 按下一次
+      } else {
+        btn[i].relMs = now;      // 松手：双击窗口从这一刻开始倒计时
+      }
+    }
+
+    // ③ 手已松开、窗口也走完了 —— 现在才能确定是单击还是双击
+    if(btn[i].clicks > 0 && btn[i].stable == HIGH &&
+       now - btn[i].relMs >= BTN_DOUBLE_MS) {
+      byte n = btn[i].clicks;
+      btn[i].clicks = 0;                       // 清掉，准备下一次
+      if(n == 1) onButton(i, false);           // 一次点击 -> 单击
+      else       onButton(i, true);            // 两次及以上 -> 双击
+    }
+  }
+}
+
+
+// ------------------------------------------------------------
+//  onButton —— 手势识别出来之后，落到具体功能上
+//
+//  idx      : 0 = 左摇杆，1 = 右摇杆
+//  isDouble : true = 双击，false = 单击
+//
+//  四个功能函数在别处已经写好了（串口 N/R/P/Z 也会调它们），
+//  这里只是换了个"触发方式"，功能本身一行都不用改。
+// ------------------------------------------------------------
+void onButton(byte idx, bool isDouble) {
+
+  // 先把识别到的手势报出来 —— 上机调试时靠这行判断引脚对不对
+  Serial.print(F("+KEY "));
+  if(idx == 0) Serial.print(F("LEFT "));
+  else         Serial.print(F("RIGHT "));
+  if(isDouble) Serial.println(F("DOUBLE"));
+  else         Serial.println(F("SINGLE"));
+
+  if(idx == 0 && !isDouble) {          // 左单击 = 按键1
+    cyclePickPlace();
+    resetButtons();
+  } else if(idx == 1 && !isDouble) {   // 右单击 = 按键2（非阻塞，不用清）
+    toggleRecord();
+  } else if(idx == 0 && isDouble) {    // 左双击 = 按键3
+    playRecord();
+    resetButtons();
+  } else {                             // 右双击 = 按键4
+    armIniPos();
+    resetButtons();
+  }
+}
+
+
+// ------------------------------------------------------------
+//  resetButtons —— 阻塞动作跑完之后，把按键状态清干净
+//
+//  上面三个功能（循环夹取 / 播放 / 回中）内部是 delay 死等，
+//  跑的时候 loop 整个停转，scanButtons 一次都没被调用。
+//  如果动作期间手碰了摇杆按键，那一下会"积压"在电平里；
+//  动作一结束，扫描函数会把它当成一次真实点击，触发一个
+//  莫名其妙的功能。所以动作结束后主动清一次账。
+// ------------------------------------------------------------
+void resetButtons() {
+  for(byte i = 0; i < 2; i++) {
+    btn[i].lastRaw = HIGH;
+    btn[i].stable  = HIGH;
+    btn[i].clicks  = 0;
+    btn[i].chgMs   = millis();
+    btn[i].relMs   = millis();
+  }
+}
+
+
+// ------------------------------------------------------------
+//  probeTick —— 按键引脚探测（发 'K' 开关）
+//
+//  不确定摇杆按键接在哪根引脚上时用它：发 'K' 进探测模式，
+//  然后按一下摇杆按键，串口打印出来的引脚号就是它。
+//
+//  为什么需要这个：摇杆按键的引脚各家板子不一样，代码里那两个
+//  数字填错了，现象是"按了完全没反应"—— 和"代码写错"长得一模一样，
+//  很难分辨。有个能直接问引脚的工具，就不用猜了。
+// ------------------------------------------------------------
+void probeTick() {
+  if(!probeMode) return;
+
+  for(byte i = 0; i < PROBE_N; i++) {
+    if(digitalRead(PROBE_PINS[i]) == LOW) {
+      Serial.print(F("+PROBE: LOW on pin "));
+      Serial.println(PROBE_PINS[i]);
+      delay(300);              // 同一根引脚别刷屏
+    }
+  }
 }
