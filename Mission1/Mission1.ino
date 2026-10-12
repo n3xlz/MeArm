@@ -33,6 +33,58 @@ const int JOY_A2_MIN = 0, JOY_A2_MAX = 1023;   // 右摇杆 纵  -> 前臂
 const int JOY_A3_MIN = 0, JOY_A3_MAX = 1023;   // 右摇杆 横  -> 爪子
 
 
+// ============================================================
+//  任务二：A / B / C 自动夹取与放置
+// ------------------------------------------------------------
+//  一个"姿态" = 四个关节的角度，顺序固定为：{ base, rArm, fArm, claw }
+//  一个"动作序列" = 若干个姿态，机械臂按顺序一个一个走过去。
+//
+//  claw：值大 = 张开（clawMax = 100）；值小 = 夹紧（clawMin = 25）
+//
+//  ⚠ 下面三个序列里的数字都是【示例值】—— 能让整条动作流程跑起来，
+//     但抓不到真实的物体。必须按"标定流程"实测后替换成你自己的值。
+// ============================================================
+
+// —— 物体 A（三枚硬币）——
+const int SEQ_A[][4] = {
+  {  20,  75, 110, 100 },   // 1 取物位上方（爪张开）
+  {  20,  62,  95, 100 },   // 2 下降到取物位
+  {  20,  62,  95,  25 },   // 3 合爪夹紧
+  {  20,  75, 110,  25 },   // 4 抬起（保持夹紧）
+  { 110,  75, 110,  25 },   // 5 转到放置位上方
+  { 110,  62,  95,  25 },   // 6 下降到放置位
+  { 110,  62,  95, 100 },   // 7 张爪松开
+  { 110,  75, 110, 100 },   // 8 抬起
+  {  90,  90,  90,  90 }    // 9 回中
+};
+
+// —— 物体 B（笔）——
+const int SEQ_B[][4] = {
+  {  70,  80, 112, 100 },   // 1 取物位上方
+  {  70,  68,  98, 100 },   // 2 下降到取物位
+  {  70,  68,  98,  25 },   // 3 合爪夹紧
+  {  70,  80, 112,  25 },   // 4 抬起
+  { 160,  80, 112,  25 },   // 5 转到放置位上方
+  { 160,  68,  98,  25 },   // 6 下降到放置位
+  { 160,  68,  98, 100 },   // 7 张爪松开
+  { 160,  80, 112, 100 },   // 8 抬起
+  {  90,  90,  90,  90 }    // 9 回中
+};
+
+// —— 物体 C（自定义物体）——
+const int SEQ_C[][4] = {
+  { 120,  85, 115, 100 },   // 1 取物位上方
+  { 120,  72, 100, 100 },   // 2 下降到取物位
+  { 120,  72, 100,  25 },   // 3 合爪夹紧
+  { 120,  85, 115,  25 },   // 4 抬起
+  {  10,  85, 115,  25 },   // 5 转到放置位上方
+  {  10,  72, 100,  25 },   // 6 下降到放置位
+  {  10,  72, 100, 100 },   // 7 张爪松开
+  {  10,  85, 115, 100 },   // 8 抬起
+  {  90,  90,  90,  90 }    // 9 回中
+};
+
+
 void setup() {
 
   mode = 1;
@@ -144,6 +196,19 @@ void armDataCmd(char serialCmd) {
         break;
       case 'I':
         armIniPos();
+        break;
+
+      case 'A':   // 任务二：夹取物体 A 并放置到另一个位置
+        Serial.println("Received Command:Pick & Place Object A");
+        runSequence(SEQ_A, sizeof(SEQ_A) / sizeof(SEQ_A[0]));
+        break;
+      case 'B':   // 任务二：夹取物体 B 并放置到另一个位置
+        Serial.println("Received Command:Pick & Place Object B");
+        runSequence(SEQ_B, sizeof(SEQ_B) / sizeof(SEQ_B[0]));
+        break;
+      case 'C':   // 任务二：夹取物体 C 并放置到另一个位置
+        Serial.println("Received Command:Pick & Place Object C");
+        runSequence(SEQ_C, sizeof(SEQ_C) / sizeof(SEQ_C[0]));
         break;
 
       default:
@@ -269,3 +334,77 @@ void armIniPos() {
   }
 }
 
+
+// ============================================================
+//  任务二用到的两个函数
+// ============================================================
+
+// ------------------------------------------------------------
+//  moveAll —— 四个关节【同时】走，各自按比例插值
+//
+//  和 servoCmd 的区别：
+//    servoCmd 是一个轴走完再走下一个（顺序执行，动作一顿一顿）
+//    moveAll  是四个轴一起动、同时到达（动作一气呵成）
+//
+//  原理：先算出四个轴里最长的那段行程 = 总共要走多少步；
+//        第 s 步时，每个轴都走到"自己行程的 s / 总量"处。
+//        行程长的轴每步走得多，行程短的轴每步走得少，最后一起到位。
+// ------------------------------------------------------------
+void moveAll(int tb, int tr, int tf, int tc) {
+
+  // 限位保护：填错数字超过范围时，先提醒你，再夹回边界
+  if (tb < baseMin || tb > baseMax) Serial.println("+Warning: 序列里 base 角度超限，已夹到边界");
+  if (tr < rArmMin || tr > rArmMax) Serial.println("+Warning: 序列里 rArm 角度超限，已夹到边界");
+  if (tf < fArmMin || tf > fArmMax) Serial.println("+Warning: 序列里 fArm 角度超限，已夹到边界");
+  if (tc < clawMin || tc > clawMax) Serial.println("+Warning: 序列里 claw 角度超限，已夹到边界");
+
+  tb = constrain(tb, baseMin, baseMax);
+  tr = constrain(tr, rArmMin, rArmMax);
+  tf = constrain(tf, fArmMin, fArmMax);
+  tc = constrain(tc, clawMin, clawMax);
+
+  // 当前位置（read 读到的就是上一次 write 进去的角度）
+  int cb = base.read();
+  int cr = rArm.read();
+  int cf = fArm.read();
+  int cc = claw.read();
+
+  // 四个轴各自的行程（取绝对值）
+  int d1 = abs(tb - cb);
+  int d2 = abs(tr - cr);
+  int d3 = abs(tf - cf);
+  int d4 = abs(tc - cc);
+
+  // 最长的那一段决定总步数
+  int steps = d1;
+  if (d2 > steps) steps = d2;
+  if (d3 > steps) steps = d3;
+  if (d4 > steps) steps = d4;
+
+  if (steps == 0) return;   // 已经在目标位置了，什么都不用做
+
+  for (int s = 1; s <= steps; s++) {
+    base.write(cb + (tb - cb) * s / steps);
+    rArm.write(cr + (tr - cr) * s / steps);
+    fArm.write(cf + (tf - cf) * s / steps);
+    claw.write(cc + (tc - cc) * s / steps);
+    delay(DSD);             // 每步延迟，DSD 越小动作越快（H / L 可调）
+  }
+
+}
+
+
+// ------------------------------------------------------------
+//  runSequence —— 把一个动作序列从头到尾走完
+//
+//  seq   : 姿态数组，形状 [动作数][4]
+//  steps : 数组里有几个动作
+//
+//  调用时用 sizeof(SEQ_A) / sizeof(SEQ_A[0]) 自动算动作数，
+//  这样以后你往序列里加 / 删动作，都不用再回头改这个数字。
+// ------------------------------------------------------------
+void runSequence(const int seq[][4], int steps) {
+  for (int i = 0; i < steps; i++) {
+    moveAll(seq[i][0], seq[i][1], seq[i][2], seq[i][3]);
+  }
+}
