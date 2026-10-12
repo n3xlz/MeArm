@@ -23,14 +23,36 @@ int speedScale = 100;
 
 int DSD = 15; //Default Servo Delay 默认电机运动延迟时间
 
-bool mode = 1; //mode = 1: 指令模式，mode = 0: 摇杆模式
+// ============================================================
+//  摇杆设置 —— 摇杆和串口指令【同时有效】，不再用 M 互斥切换
+// ------------------------------------------------------------
+//  旧写法是"绝对映射"：摇杆在哪，手臂就在哪。
+//    后果：摇杆一回到中位，就把手臂拽回 90°，
+//          刚用指令设好的位置活不过一帧。
+//  新写法是"增量映射"：摇杆偏离中位，角度才加一点 / 减一点。
+//    后果：摇杆居中 = 什么都不做 = 指令设的位置被保留住。
+// ============================================================
+bool joyOn = true;            // 摇杆总开关，默认开。发 M 可以临时关掉
 
-int moveStep = 3; //摇动摇杆时每次改变的角度
+// 四个摇杆轴【各自的】居中读数（2026-10-12 实测）
+// 理论上是 512，但实际每根轴都有偏差，最大的一根偏了 24。
+// 各用各的实测值，四个方向的死区才对称、手感才一致。
+const int JOY_MID_A0 = 507;   // 左摇杆 左右
+const int JOY_MID_A1 = 529;   // 左摇杆 前后
+const int JOY_MID_A2 = 498;   // 右摇杆 前后
+const int JOY_MID_A3 = 536;   // 右摇杆 左右
 
-const int JOY_A0_MIN = 0, JOY_A0_MAX = 1023;   // 左摇杆 横  -> 底座
-const int JOY_A1_MIN = 0, JOY_A1_MAX = 1023;   // 左摇杆 纵  -> 后臂
-const int JOY_A2_MIN = 0, JOY_A2_MAX = 1023;   // 右摇杆 纵  -> 前臂
-const int JOY_A3_MIN = 0, JOY_A3_MAX = 1023;   // 右摇杆 横  -> 爪子
+const int JOY_DEADZONE = 60;  // 死区：偏离中位不超过这个数就不动（防抖、防漂移）
+
+// 摇杆每轮对角度改变多少度 —— 越大动得越快。
+// 注意这是【速度】不是【位置】：摇杆居中，手臂就停在原地不动。
+int moveStep = 3;
+
+// 摇杆四个轴分别管哪个关节
+//   A0 = 左摇杆 左右 -> base 底座
+//   A1 = 左摇杆 前后 -> rArm 后臂
+//   A2 = 右摇杆 前后 -> fArm 前臂
+//   A3 = 右摇杆 左右 -> Claw 爪子
 
 
 // ============================================================
@@ -87,7 +109,7 @@ const int SEQ_C[][4] = {
 
 void setup() {
 
-  mode = 1;
+  joyOn = true;
   base.attach(11);
   base.write(90);
   delay(200);
@@ -106,29 +128,23 @@ void setup() {
   
   Serial.begin(9600);  //串口波特率
   Serial.println("Start!");
-  if(mode) {
-    Serial.println("Now is Command Mode.");
-  }
+  Serial.println("Command Ready / Joystick ON");
 
 }
 
 void loop() {
+  // ① 串口指令：随时可发，不受摇杆影响
   if(Serial.available() > 0) {
     char serialCmd = Serial.read();
     armDataCmd(serialCmd);
   }
 
-  if(!mode) {
-    joyCtrl();
-    base.write(basePos);
-    delay(10);
-    rArm.write(rArmPos);
-    delay(10);
-    fArm.write(fArmPos);
-    delay(10);
-    claw.write(clawPos);
-    delay(10);
-  }
+  // ② 摇杆：每一轮都读。
+  //    摇杆居中时它什么都不改，所以刚发完的指令位置会被原样保留下来
+  joyCtrl();
+
+  // ③ 把四个目标角度推向舵机
+  updateServos();
 
 }
 
@@ -183,13 +199,10 @@ void armDataCmd(char serialCmd) {
         }
         break;
 
-      case 'M': //指令模式 / 摇杆模式 切换
-        mode = !mode;
-        if(mode) {
-          Serial.println("Now is Command Mode.");
-        } else {
-          Serial.println("Now is Joystick Mode.");
-        }
+      case 'M': //摇杆使能开关（关掉后手臂只认串口指令，防止演示时误碰摇杆）
+        joyOn = !joyOn;
+        Serial.print("Joystick ");
+        Serial.println(joyOn ? "ON" : "OFF");
         break;
       case '?':
         reportStatus();
@@ -233,20 +246,49 @@ void reportStatus() {
 }
 
 // ------------------------------------------------------------
-//  joyCtrl —— 读四个摇杆轴，映射成四个关节的目标角度
+//  joyDelta —— 读一个摇杆轴，返回"这一轮该给角度加多少"
+//
+//  pin : 模拟口（A0 ~ A3）
+//  mid : 这【一根】轴的实测居中值（四根轴各不相同）
+//
+//  返回值只有三种：+moveStep、-moveStep、0
+//  0 是关键 —— 它代表"摇杆没动，别碰这个轴"。
+//  正是因为会返回 0，指令设好的位置才不会被覆盖。
+// ------------------------------------------------------------
+int joyDelta(int pin, int mid) {
+  int v = analogRead(pin);
+  if(v > mid + JOY_DEADZONE) return  moveStep;   // 往"大值"方向推
+  if(v < mid - JOY_DEADZONE) return -moveStep;   // 往"小值"方向推
+  return 0;                                      // 在死区内，不动
+}
+
+// ------------------------------------------------------------
+//  joyCtrl —— 四个轴各自判断该不该动
+//
+//  和旧版最大的区别：这里不再"赋值"，而是"累加"。
+//  旧版每次都用摇杆位置把角度整个盖掉；
+//  新版只在摇杆确实被推偏时才加减一点，其余时候一个数都不碰。
 // ------------------------------------------------------------
 void joyCtrl() {
-  basePos = map(analogRead(A0), JOY_A0_MIN, JOY_A0_MAX, baseMin, baseMax);
-  basePos = constrain(basePos, baseMin, baseMax);
+  if(!joyOn) return;         // 摇杆被关掉了，直接返回
 
-  rArmPos = map(analogRead(A1), JOY_A1_MIN, JOY_A1_MAX, rArmMin, rArmMax);
-  rArmPos = constrain(rArmPos, rArmMin, rArmMax);
+  basePos += joyDelta(A0, JOY_MID_A0);   basePos = constrain(basePos, baseMin, baseMax);
+  rArmPos += joyDelta(A1, JOY_MID_A1);   rArmPos = constrain(rArmPos, rArmMin, rArmMax);
+  fArmPos += joyDelta(A2, JOY_MID_A2);   fArmPos = constrain(fArmPos, fArmMin, fArmMax);
+  clawPos += joyDelta(A3, JOY_MID_A3);   clawPos = constrain(clawPos, clawMin, clawMax);
+}
 
-  fArmPos = map(analogRead(A2), JOY_A2_MIN, JOY_A2_MAX, fArmMin, fArmMax);
-  fArmPos = constrain(fArmPos, fArmMin, fArmMax);
-
-  clawPos = map(analogRead(A3), JOY_A3_MIN, JOY_A3_MAX, clawMin, clawMax);
-  clawPos = constrain(clawPos, clawMin, clawMax);
+// ------------------------------------------------------------
+//  updateServos —— 把四个"目标角度"推到舵机上
+//
+//  只有跟舵机当前角度不一样时才写，避免每轮重复发同样的脉冲。
+//  摇杆居中时四个值都不变 → 一个字节都不发 → 手臂纹丝不动。
+// ------------------------------------------------------------
+void updateServos() {
+  if(basePos != base.read()) { base.write(basePos); delay(10); }
+  if(rArmPos != rArm.read()) { rArm.write(rArmPos); delay(10); }
+  if(fArmPos != fArm.read()) { fArm.write(fArmPos); delay(10); }
+  if(clawPos != claw.read()) { claw.write(clawPos); delay(10); }
 }
 
 
@@ -318,6 +360,14 @@ void servoCmd(char servoName,int toPos,int servoDelay)
     }
   }
 
+  // 动作结束后，把"目标角度"同步到舵机实际停的那个位置。
+  // 不做这一步，摇杆下一轮就会从旧角度继续加减，把手臂猛地拽回去。
+  switch(servoName) {
+    case 'b': basePos = toPos; break;
+    case 'r': rArmPos = toPos; break;
+    case 'f': fArmPos = toPos; break;
+    case 'c': clawPos = toPos; break;
+  }
 }
 
 void armIniPos() {
@@ -391,6 +441,12 @@ void moveAll(int tb, int tr, int tf, int tc) {
     delay(DSD);             // 每步延迟，DSD 越小动作越快（H / L 可调）
   }
 
+  // 同步"目标角度"，理由同 servoCmd：
+  // 序列跑完后，摇杆要能从终点继续接手，而不是从起点重新算。
+  basePos = tb;
+  rArmPos = tr;
+  fArmPos = tf;
+  clawPos = tc;
 }
 
 
