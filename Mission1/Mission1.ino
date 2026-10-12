@@ -127,8 +127,8 @@ void setup() {
   delay(200);
   
   Serial.begin(9600);  //串口波特率
-  Serial.println("Start!");
-  Serial.println("Command Ready / Joystick ON");
+  Serial.println(F("Start!"));
+  Serial.println(F("Command Ready / Joystick ON"));
 
 }
 
@@ -167,42 +167,42 @@ void armDataCmd(char serialCmd) {
     switch(serialCmd) {
 
       case 'O': //机械臂爪子张开
-        Serial.println("Received Command:Claw Open");
+        Serial.println(F("Received Command:Claw Open"));
         clawPos = clawMax;
         servoCmd('c',clawPos,DSD);
         break;
       case 'S': //机械臂爪子关闭
-        Serial.println("Received Command:Claw Close");
+        Serial.println(F("Received Command:Claw Close"));
         clawPos = clawMin;
         servoCmd('c',clawPos,DSD);
         break;
       case 'H': //提升机械臂整体运行速度
-        Serial.println("Received Command:Speed Higher");
+        Serial.println(F("Received Command:Speed Higher"));
         DSD -= 3;
         if(DSD <= 9) {
           DSD = 9;
-          Serial.println("Servo Speed is Too High.");
+          Serial.println(F("Servo Speed is Too High."));
         } else if(DSD >= 45) {
           DSD = 45;
-          Serial.println("Servo Speed is Too Low.");
+          Serial.println(F("Servo Speed is Too Low."));
         }
         break;
       case 'L': //降低机械臂整体运行速度
-        Serial.println("Received Command:Speed Lower");
+        Serial.println(F("Received Command:Speed Lower"));
         DSD += 3;
         if(DSD <= 9) {
           DSD = 9;
-          Serial.println("Servo Speed is Too High.");
+          Serial.println(F("Servo Speed is Too High."));
         } else if(DSD >= 45) {
           DSD = 45;
-          Serial.println("Servo Speed is Too Low.");
+          Serial.println(F("Servo Speed is Too Low."));
         }
         break;
 
       case 'M': //摇杆使能开关（关掉后手臂只认串口指令，防止演示时误碰摇杆）
         joyOn = !joyOn;
-        Serial.print("Joystick ");
-        Serial.println(joyOn ? "ON" : "OFF");
+        Serial.print(F("Joystick "));
+        Serial.println(joyOn ? F("ON") : F("OFF"));
         break;
       case '?':
         reportStatus();
@@ -212,20 +212,20 @@ void armDataCmd(char serialCmd) {
         break;
 
       case 'A':   // 任务二：夹取物体 A 并放置到另一个位置
-        Serial.println("Received Command:Pick & Place Object A");
+        Serial.println(F("Received Command:Pick & Place Object A"));
         runSequence(SEQ_A, sizeof(SEQ_A) / sizeof(SEQ_A[0]));
         break;
       case 'B':   // 任务二：夹取物体 B 并放置到另一个位置
-        Serial.println("Received Command:Pick & Place Object B");
+        Serial.println(F("Received Command:Pick & Place Object B"));
         runSequence(SEQ_B, sizeof(SEQ_B) / sizeof(SEQ_B[0]));
         break;
       case 'C':   // 任务二：夹取物体 C 并放置到另一个位置
-        Serial.println("Received Command:Pick & Place Object C");
+        Serial.println(F("Received Command:Pick & Place Object C"));
         runSequence(SEQ_C, sizeof(SEQ_C) / sizeof(SEQ_C[0]));
         break;
 
       default:
-        Serial.println("Unknown Command.");
+        Serial.println(F("Unknown Command."));
 
     }
   }
@@ -235,13 +235,13 @@ void reportStatus() {
 
   Serial.println();
   Serial.println();
-  Serial.println("+ Robot-Arm Status Report +");
-  Serial.print("Claw Position:"); Serial.println(claw.read());
-  Serial.print("Rear Arm Position:"); Serial.println(rArm.read());
-  Serial.print("Front Arm Position:"); Serial.println(fArm.read());
-  Serial.print("Base Position:"); Serial.println(base.read());
-  Serial.println("++++++++++++++++++");
-  Serial.println(" ");
+  Serial.println(F("+ Robot-Arm Status Report +"));
+  Serial.print(F("Claw Position:")); Serial.println(claw.read());
+  Serial.print(F("Rear Arm Position:")); Serial.println(rArm.read());
+  Serial.print(F("Front Arm Position:")); Serial.println(fArm.read());
+  Serial.print(F("Base Position:")); Serial.println(base.read());
+  Serial.println(F("++++++++++++++++++"));
+  Serial.println(F(" "));
 
 }
 
@@ -297,15 +297,15 @@ void servoCmd(char servoName,int toPos,int servoDelay)
 
   Servo servo2go;
 
-  Serial.println(" ");
-  Serial.print("+Command: Servo ");
+  Serial.println(F(" "));
+  Serial.print(F("+Command: Servo "));
   Serial.print(servoName);
-  Serial.print(" to ");
+  Serial.print(F(" to "));
   Serial.print(toPos);
-  Serial.print(" at servoDelay value ");
+  Serial.print(F(" at servoDelay value "));
   Serial.print(servoDelay);
-  Serial.println(".");
-  Serial.println(" ");
+  Serial.println(F("."));
+  Serial.println(F(" "));
 
   int fromPos;
 
@@ -316,7 +316,7 @@ void servoCmd(char servoName,int toPos,int servoDelay)
         fromPos = base.read();
         break;
       } else {
-        Serial.println("+Warning: Base Servo Value Out Of Limit!");
+        Serial.println(F("+Warning: Base Servo Value Out Of Limit!"));
         return;
       }
     case 'r':
@@ -325,7 +325,7 @@ void servoCmd(char servoName,int toPos,int servoDelay)
         fromPos = rArm.read();
         break;
       } else {
-        Serial.println("+Warning: Rear Servo Value Out Of Limit!");
+        Serial.println(F("+Warning: Rear Servo Value Out Of Limit!"));
         return;
       }
     case 'f':
@@ -334,7 +334,7 @@ void servoCmd(char servoName,int toPos,int servoDelay)
         fromPos = fArm.read();
         break;
       } else {
-        Serial.println("+Warning: Arm Servo Value Out Of Limit!");
+        Serial.println(F("+Warning: Arm Servo Value Out Of Limit!"));
         return;
       }
     case 'c':
@@ -343,7 +343,7 @@ void servoCmd(char servoName,int toPos,int servoDelay)
         fromPos = claw.read();
         break;
       } else {
-        Serial.println("+Warning: Claw Servo Value Out Of Limit!");
+        Serial.println(F("+Warning: Claw Servo Value Out Of Limit!"));
         return;
       }
   }
@@ -371,7 +371,7 @@ void servoCmd(char servoName,int toPos,int servoDelay)
 }
 
 void armIniPos() {
-  Serial.println("+Command:Restore Initial Position.");
+  Serial.println(F("+Command:Restore Initial Position."));
   int robotIniPosArray[4][3] = {
     {'b',90,DSD},
     {'r',90,DSD},
@@ -403,10 +403,10 @@ void armIniPos() {
 void moveAll(int tb, int tr, int tf, int tc) {
 
   // 限位保护：填错数字超过范围时，先提醒你，再夹回边界
-  if (tb < baseMin || tb > baseMax) Serial.println("+Warning: 序列里 base 角度超限，已夹到边界");
-  if (tr < rArmMin || tr > rArmMax) Serial.println("+Warning: 序列里 rArm 角度超限，已夹到边界");
-  if (tf < fArmMin || tf > fArmMax) Serial.println("+Warning: 序列里 fArm 角度超限，已夹到边界");
-  if (tc < clawMin || tc > clawMax) Serial.println("+Warning: 序列里 claw 角度超限，已夹到边界");
+  if (tb < baseMin || tb > baseMax) Serial.println(F("+Warning: 序列里 base 角度超限，已夹到边界"));
+  if (tr < rArmMin || tr > rArmMax) Serial.println(F("+Warning: 序列里 rArm 角度超限，已夹到边界"));
+  if (tf < fArmMin || tf > fArmMax) Serial.println(F("+Warning: 序列里 fArm 角度超限，已夹到边界"));
+  if (tc < clawMin || tc > clawMax) Serial.println(F("+Warning: 序列里 claw 角度超限，已夹到边界"));
 
   tb = constrain(tb, baseMin, baseMax);
   tr = constrain(tr, rArmMin, rArmMax);
