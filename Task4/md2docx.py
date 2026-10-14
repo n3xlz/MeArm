@@ -412,9 +412,11 @@ def build_cover(doc):
 #  主流程
 # ============================================================
 def main():
-    src = "/tmp/mission4/task4.md"
-    out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/mission4/out.docx"
-    figdir = "/tmp/mission4"
+    # 输入 markdown 与输出 docx 都从命令行参数取，图片目录跟 markdown 同级。
+    # 这样脚本可以从任何地方调用，不再写死 /tmp/mission4。
+    src = sys.argv[1] if len(sys.argv) > 1 else "task4.md"
+    out = sys.argv[2] if len(sys.argv) > 2 else "任务四-运动学推导.docx"
+    figdir = os.path.dirname(os.path.abspath(src))
 
     doc = Document()
     sec = doc.sections[0]
