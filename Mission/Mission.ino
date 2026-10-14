@@ -174,6 +174,75 @@ struct BtnState {
 BtnState btn[2];
 
 
+// ============================================================
+//  任务五：轨迹绘制
+// ------------------------------------------------------------
+//  给一个末端坐标 (x,y,z)，算出三个关节角再写进舵机。这套
+//  "坐标 -> 角度"的换算叫【逆解】，推导见 任务四-运动学推导.docx。
+//
+//  状态机（非阻塞，millis 看时间，跟 recordTick 一个套路）：
+//    DRAW_IDLE  没在画
+//    DRAW_RUN   正在画，每 DRAW_STEP_MS 推进一步
+//    DRAW_PAUSE 暂停（保留 wayI / curX 等进度，发 '4' 接着画）
+//    DRAW_DONE  画完一段，等下一条指令
+//
+//  发 '5' 任何时候都能取消：抬笔、清航点、回 IDLE。
+//
+//  连杆参数与任务四一致（单位 mm）：
+//    D=15  H=64  L1=80  Lf=133 （Lf = L2+L3）
+//  可达判据：53 ≤ ρ ≤ 213 mm
+// ============================================================
+
+// —— 连杆参数（标称值，单位 mm）——
+const float ARM_D  = 15.0f;
+const float ARM_H  = 64.0f;
+const float ARM_L1 = 80.0f;
+const float ARM_LF = 133.0f;
+
+// —— 笔尖高度（单位 mm，待标定）——
+//  penZDown：笔尖接触纸面的高度
+//  penZUp  ：抬笔高度（每段画完抬一下，避免拖痕）
+//  数值要等笔装好实测后替换。先放占位值让代码能编译。
+float penZDown = 30.0f;
+float penZUp   = 70.0f;
+
+// —— 关节角↔舵机角度的线性映射：a = a0 + σ·θ ——
+//  A0_*   是"关节角 θ=0 时对应的舵机角度"
+//  SIGMA_* 是安装方向（+1 或 -1），由舵机正反装决定
+//  这 6 个值要等机械臂装好后用两点标定法测出来替换，
+//  方法见 任务四-运动学推导.docx 附录 A。
+const float A0_BASE = 90.0f;  const float SIGMA_BASE =  1.0f;
+const float A0_RARM = 90.0f;  const float SIGMA_RARM =  1.0f;
+const float A0_FARM = 90.0f;  const float SIGMA_FARM =  1.0f;
+
+// —— 轨迹步长 / 步间隔 ——
+//  DRAW_STEP_MM：每步末端移动多少 mm，越小越平滑、越慢
+//  DRAW_STEP_MS：每步间隔多少 ms，越小越快
+const float         DRAW_STEP_MM = 2.0f;
+const unsigned long DRAW_STEP_MS = 30;
+
+// —— 状态机 ——
+enum DrawState {
+  DRAW_IDLE,
+  DRAW_RUN,
+  DRAW_PAUSE,
+  DRAW_DONE
+};
+DrawState drawState = DRAW_IDLE;
+
+// —— 航点表 ——
+//  一条轨迹 = 一串航点 (x,y,z)。drawTick 把当前末端从"上一个航点"
+//  线性插值推到"下一个航点"，到了就 wayI++。
+#define MAX_WAY 16
+struct WayPt { float x; float y; float z; };
+WayPt way[MAX_WAY];
+int   wayN = 0;        // 航点总数
+int   wayI = 0;        // 当前正前往的航点索引（从 0 开始；走完一段 +1）
+
+// 当前末端坐标（绘制过程中实时更新，暂停/继续/取消都靠它接得上）
+float curX = 0, curY = 0, curZ = 0;
+
+
 void setup() {
 
   joyOn = true;
@@ -219,9 +288,11 @@ void loop() {
   //    同样是非阻塞的 —— 只读电平 + 看 millis()，一次 delay 都不打
   scanButtons();
 
-  // ③ 摇杆：每一轮都读。
-  //    摇杆居中时它什么都不改，所以刚发完的指令位置会被原样保留下来
-  joyCtrl();
+  // ③ 任务五：轨迹绘制心跳。
+  //    DRAW_RUN 时每轮推进一段；DRAW_RUN / DRAW_PAUSE 期间禁用摇杆，
+  //    避免摇杆抢位置把线画歪。为什么禁摇杆见 DEVLOG.md 2026-10-13。
+  if(drawState == DRAW_RUN) drawTick();
+  if(drawState == DRAW_IDLE || drawState == DRAW_DONE) joyCtrl();
 
   // ④ 录制采样：正在录的话，每 FRAME_MS 存一帧当前姿态
   //    非阻塞，所以录制期间摇杆照样能操控（按键2 要的就是这个）
@@ -322,6 +393,28 @@ void armDataCmd(char serialCmd) {
       case 'Z':   // 按键4：回中（等同于已有的 I 命令）
         Serial.println(F("Received Command:Go Home"));
         armIniPos();
+        break;
+
+      // ---- 任务五：轨迹绘制 ----
+      //  '0' 打印当前末端坐标（正解自检，标定时靠它对方向）
+      //  '1' 画预设直线：在 y=0 平面上画 x=60 -> 160 的直线
+      //  '3' 暂停     '4' 继续     '5' 取消
+      //  '2' 留给下一关（基础图形 N/△/Z/V）
+      case '0':
+        printForwardKinematics();
+        break;
+      case '1':
+        Serial.println(F("Received Command:Draw Line"));
+        drawLine(60.0f, 0.0f, 160.0f, 0.0f);
+        break;
+      case '3':
+        drawPause();
+        break;
+      case '4':
+        drawResume();
+        break;
+      case '5':
+        drawCancel();
         break;
 
       default:
@@ -789,4 +882,265 @@ void resetButtons() {
     btn[i].chgMs   = millis();
     btn[i].relMs   = millis();
   }
+}
+
+
+// ============================================================
+//  任务五：轨迹绘制
+// ============================================================
+
+// ------------------------------------------------------------
+//  th2servo* / servo2th* —— 关节角 θ（弧度）↔ 舵机角度（度）
+//
+//  线性映射：a = a0 + σ·θ
+//    th2servo   : 已知 θ，算舵机角度
+//    servo2th   : 已知舵机角度，反算 θ
+//  θ 在公式里用弧度，但映射时先转成度（舵机角度是度）。
+// ------------------------------------------------------------
+float th2servoBase(float th) { return A0_BASE + SIGMA_BASE * degrees(th); }
+float th2servoRarm(float th) { return A0_RARM + SIGMA_RARM * degrees(th); }
+float th2servoFarm(float th) { return A0_FARM + SIGMA_FARM * degrees(th); }
+
+float servo2thBase(float a) { return radians((a - A0_BASE) / SIGMA_BASE); }
+float servo2thRarm(float a) { return radians((a - A0_RARM) / SIGMA_RARM); }
+float servo2thFarm(float a) { return radians((a - A0_FARM) / SIGMA_FARM); }
+
+
+// ------------------------------------------------------------
+//  forwardKinematics —— 正解：三个舵机角度 -> 末端 (x,y,z)
+//
+//  几何投影法（推导见任务四文档 3.2 节）：
+//    θ1 = servo2thBase(base)    底座回转
+//    θ2 = servo2thRarm(rArm)    肩
+//    θ3 = servo2thFarm(fArm)    肘
+//    R  = L1·cosθ2 + Lf·cos(θ2+θ3)    伸出半径
+//    x  = (D + R)·cosθ1
+//    y  = (D + R)·sinθ1
+//    z  = H + L1·sinθ2 + Lf·sin(θ2+θ3)
+//
+//  注意 θ2/θ3 的正方向约定：θ2>0 抬起，θ3>0 肘往上弯。
+//  标定后如果方向反了，改 SIGMA_* 的正负号即可，公式不用动。
+// ------------------------------------------------------------
+void forwardKinematics(float &ox, float &oy, float &oz) {
+  float t1 = servo2thBase(base.read());
+  float t2 = servo2thRarm(rArm.read());
+  float t3 = servo2thFarm(fArm.read());
+
+  float R = ARM_L1 * cos(t2) + ARM_LF * cos(t2 + t3);
+  ox = (ARM_D + R) * cos(t1);
+  oy = (ARM_D + R) * sin(t1);
+  oz = ARM_H + ARM_L1 * sin(t2) + ARM_LF * sin(t2 + t3);
+}
+
+
+// ------------------------------------------------------------
+//  printForwardKinematics —— '0' 命令：打印当前末端坐标
+//  上机调试时靠它验证正解/逆解/标定有没有错。
+// ------------------------------------------------------------
+void printForwardKinematics() {
+  float x, y, z;
+  forwardKinematics(x, y, z);
+  Serial.println(F("+Forward Kinematics"));
+  Serial.print(F("  base=")); Serial.print(base.read());
+  Serial.print(F("  rArm=")); Serial.print(rArm.read());
+  Serial.print(F("  fArm=")); Serial.println(fArm.read());
+  Serial.print(F("  end = ("));
+  Serial.print(x); Serial.print(F(", "));
+  Serial.print(y); Serial.print(F(", "));
+  Serial.print(z); Serial.println(F(") mm"));
+}
+
+
+// ------------------------------------------------------------
+//  inverseKinematics —— 逆解：末端 (x,y,z) -> 三个关节角
+//
+//  三步解析法（推导见任务四文档 4 节）：
+//    ① θ1 = atan2(y, x)                       底座回转，解耦
+//    ② r = √(x²+y²) - D,  z' = z - H,  ρ = √(r² + z'²)
+//    ③ 余弦定理：θ3 = arccos((ρ² - L1² - Lf²) / (2·L1·Lf))
+//       θ2 = atan2(z', r) - atan2(Lf·sinθ3, L1 + Lf·cosθ3)
+//
+//  返回 false = 该点不可达（ρ 出了 [|L1-Lf|, L1+Lf] = [53, 213] 范围）。
+//  肘上构型选 θ3 < 0（任务四 4.4 节）。c3 夹到 [-1,1] 防数值误差。
+// ------------------------------------------------------------
+bool inverseKinematics(float x, float y, float z,
+                       float &ot1, float &ot2, float &ot3) {
+  float t1 = atan2(y, x);
+
+  float r  = sqrt(x*x + y*y) - ARM_D;
+  float zp = z - ARM_H;
+  float rho = sqrt(r*r + zp*zp);
+
+  // 可达判据
+  if(rho < ARM_L1 - ARM_LF || rho > ARM_L1 + ARM_LF) return false;
+
+  float c3 = (rho*rho - ARM_L1*ARM_L1 - ARM_LF*ARM_LF) /
+             (2.0f * ARM_L1 * ARM_LF);
+  if(c3 >  1.0f) c3 =  1.0f;
+  if(c3 < -1.0f) c3 = -1.0f;
+  float t3 = -acos(c3);    // 取负 = 肘上构型
+
+  float t2 = atan2(zp, r) - atan2(ARM_LF * sin(t3),
+                                  ARM_L1 + ARM_LF * cos(t3));
+
+  ot1 = t1; ot2 = t2; ot3 = t3;
+  return true;
+}
+
+
+// ------------------------------------------------------------
+//  moveToSync —— 把末端走到 (x,y,z)，并等舵机走完
+//
+//  调逆解算出三个关节角，映射到舵机角度，用 moveAll 让三轴
+//  同时插值走完（阻塞）。drawLine 的"起笔抬笔"那两步用它：
+//  这两步是瞬间动作，不进状态机、不需要被暂停。
+// ------------------------------------------------------------
+bool moveToSync(float x, float y, float z) {
+  float t1, t2, t3;
+  if(!inverseKinematics(x, y, z, t1, t2, t3)) {
+    Serial.print(F("+IK FAIL at ("));
+    Serial.print(x); Serial.print(F(","));
+    Serial.print(y); Serial.print(F(","));
+    Serial.print(z); Serial.println(F(")"));
+    return false;
+  }
+  int ab = (int)th2servoBase(t1);
+  int ar = (int)th2servoRarm(t2);
+  int af = (int)th2servoFarm(t3);
+  moveAll(ab, ar, af, clawPos);    // 复用任务二的 moveAll：四轴同时插值
+  curX = x; curY = y; curZ = z;
+  return true;
+}
+
+
+// ------------------------------------------------------------
+//  moveTo —— 只设 pos，不等舵机走完
+//
+//  和 moveToSync 的区别：这里不调 moveAll、不 delay，只把目标角度
+//  写进 basePos/rArmPos/fArmPos。然后由 loop 里的 updateServos 慢慢
+//  把舵机推过去。drawTick 的每一步用它 —— 这才是真正的非阻塞画线。
+//  为什么分两个版本、moveAll 为什么不能直接用见 DEVLOG.md 2026-10-13。
+// ------------------------------------------------------------
+bool moveTo(float x, float y, float z) {
+  float t1, t2, t3;
+  if(!inverseKinematics(x, y, z, t1, t2, t3)) {
+    Serial.print(F("+IK FAIL at ("));
+    Serial.print(x); Serial.print(F(","));
+    Serial.print(y); Serial.print(F(","));
+    Serial.print(z); Serial.println(F(")"));
+    return false;
+  }
+  basePos = (int)th2servoBase(t1);
+  rArmPos = (int)th2servoRarm(t2);
+  fArmPos = (int)th2servoFarm(t3);
+  curX = x; curY = y; curZ = z;
+  return true;
+}
+
+
+// ------------------------------------------------------------
+//  drawLine —— '1' 命令：在纸面 z=penZDown 上画一条直线
+//
+//  动作流程：
+//    1) moveToSync 抬笔到起点上方 (x1, y1, penZUp)    —— 阻塞，瞬间
+//    2) moveToSync 下笔到起点     (x1, y1, penZDown)  —— 阻塞，瞬间
+//    3) 装载画线段：终点 (x2, y2, penZDown)，状态转 DRAW_RUN
+//    4) drawTick 在 loop 里非阻塞地一步步把线画过去
+//    5) 画到终点后 drawTick 自己抬笔、状态转 DRAW_DONE
+// ------------------------------------------------------------
+void drawLine(float x1, float y1, float x2, float y2) {
+  // 1. 抬笔到起点上方
+  if(!moveToSync(x1, y1, penZUp)) return;
+  // 2. 下笔
+  if(!moveToSync(x1, y1, penZDown)) return;
+
+  // 3. 装载画线段
+  way[0].x = x2;  way[0].y = y2;  way[0].z = penZDown;
+  wayN = 1;  wayI = 0;
+  curX = x1; curY = y1; curZ = penZDown;
+  drawState = DRAW_RUN;
+  Serial.println(F("+DRAW RUN"));
+}
+
+
+// ------------------------------------------------------------
+//  drawTick —— 任务五心跳，loop 里每轮调一次（DRAW_RUN 时才推进）
+//
+//  做两件事：
+//    ① 到点了（millis 走过 DRAW_STEP_MS）就推进一段
+//    ② 推进用"线性插值"：把"当前点 cur -> way[wayI]"按 DRAW_STEP_MM
+//       拆成若干小步，每步走一小段。走完一段 wayI++。
+//       全部航点走完 -> 抬笔、状态转 DRAW_DONE。
+//
+//  为什么不在每步里 delay：那样会卡住 loop，scanButtons / 串口指令
+//  全都收不到。非阻塞才能被 '3' 暂停、'5' 取消。
+// ------------------------------------------------------------
+void drawTick() {
+  static unsigned long lastMs = 0;
+  unsigned long now = millis();
+  if(now - lastMs < DRAW_STEP_MS) return;
+  lastMs = now;
+
+  // 全部航点走完了 -> 抬笔、状态转 DONE
+  if(wayI >= wayN) {
+    moveToSync(curX, curY, penZUp);
+    drawState = DRAW_DONE;
+    Serial.println(F("+DRAW DONE"));
+    return;
+  }
+
+  // 当前段：cur -> way[wayI]
+  float tx = way[wayI].x, ty = way[wayI].y, tz = way[wayI].z;
+  float dx = tx - curX, dy = ty - curY, dz = tz - curZ;
+  float dist = sqrt(dx*dx + dy*dy + dz*dz);
+
+  if(dist < DRAW_STEP_MM) {
+    // 这段太短，直接到位，下轮走下一段
+    if(!moveTo(tx, ty, tz)) { drawCancel(); return; }
+    wayI++;
+    return;
+  }
+
+  // 推进一步：方向 × 步长
+  float nx = curX + dx / dist * DRAW_STEP_MM;
+  float ny = curY + dy / dist * DRAW_STEP_MM;
+  float nz = curZ + dz / dist * DRAW_STEP_MM;
+  if(!moveTo(nx, ny, nz)) { drawCancel(); return; }
+}
+
+
+// ------------------------------------------------------------
+//  drawPause —— '3'：暂停（保留 wayI / curX 等，状态转 PAUSE）
+// ------------------------------------------------------------
+void drawPause() {
+  if(drawState != DRAW_RUN) {
+    Serial.println(F("+Not drawing, cannot pause"));
+    return;
+  }
+  drawState = DRAW_PAUSE;
+  Serial.println(F("+DRAW PAUSE"));
+}
+
+
+// ------------------------------------------------------------
+//  drawResume —— '4'：继续（状态从 PAUSE 转回 RUN，进度原样保留）
+// ------------------------------------------------------------
+void drawResume() {
+  if(drawState != DRAW_PAUSE) {
+    Serial.println(F("+Not paused, cannot resume"));
+    return;
+  }
+  drawState = DRAW_RUN;
+  Serial.println(F("+DRAW RESUME"));
+}
+
+
+// ------------------------------------------------------------
+//  drawCancel —— '5'：取消（抬笔、清航点、回 IDLE）
+// ------------------------------------------------------------
+void drawCancel() {
+  wayN = 0;  wayI = 0;
+  drawState = DRAW_IDLE;
+  moveToSync(curX, curY, penZUp);    // 抬笔（在 penZDown 的话抬起来）
+  Serial.println(F("+DRAW CANCEL"));
 }
