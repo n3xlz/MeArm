@@ -18,9 +18,15 @@ const int rArmMax = 110;
 const int fArmMin = 40;
 const int fArmMax = 130;
 const int clawMin = 25;
-const int clawMax = 110;
+const int clawMax = 120;
 
-int DSD = 15; //Default Servo Delay 默认电机运动延迟时间
+// Default Servo Delay —— 舵机每走 1 度停多少毫秒。值越小越快。
+//   H 命令减 DSD_STEP、L 命令加 DSD_STEP，范围 DSD_MIN ~ DSD_MAX。
+//   取值范围刻意拉得很宽（12 倍差），演示「速度可调」时快慢对比一眼可见。
+int DSD = 15;
+const int DSD_MIN  = 5;    // 最快：1 度 5 ms
+const int DSD_MAX  = 60;   // 最慢：1 度 60 ms
+const int DSD_STEP = 5;    // H / L 每次调整的步长
 
 // ============================================================
 //  摇杆设置 —— 摇杆和串口指令【同时有效】
@@ -57,47 +63,46 @@ int moveStep = 3;
 //
 //  claw：值大 = 张开（clawMax = 110）；值小 = 夹紧（clawMin = 25）
 //
-//  ⚠ 下面三个序列里的数字都是【示例值】—— 能让整条动作流程跑起来，
-//     但抓不到真实的物体。必须按"标定流程"实测后替换成你自己的值。
+//  ✅ SEQ_A / SEQ_B / SEQ_C 的数值全部为 2026-10-15 实测记录，各 9 位，末位都是回中。
 //
 // ============================================================
 
-// —— 物体 A（三枚硬币）——
+// —— 物体 A（三枚硬币）—— 2026-10-15 实测记录
 const byte SEQ_A[][4] = {
-  {  20,  75, 110, 100 },   // 1 取物位上方（爪张开）
-  {  20,  62,  95, 100 },   // 2 下降到取物位
-  {  20,  62,  95,  25 },   // 3 合爪夹紧
-  {  20,  75, 110,  25 },   // 4 抬起（保持夹紧）
-  { 110,  75, 110,  25 },   // 5 转到放置位上方
-  { 110,  62,  95,  25 },   // 6 下降到放置位
-  { 110,  62,  95, 100 },   // 7 张爪松开
-  { 110,  75, 110, 100 },   // 8 抬起
+  {  90, 110, 108,  54 },   // 1 取物位上方（爪张开）
+  {  90, 110,  85,  54 },   // 2 下降到取物位
+  {  90, 110,  85,  115 },   // 3 合爪夹紧
+  {  90, 110, 105,  115 },   // 4 抬起（保持夹紧）
+  { 147, 110, 105,  115 },   // 5 转到放置位上方
+  { 147, 110,  40,  115 },   // 6 下降到放置位
+  { 147, 110,  40,  25 },   // 7 张爪松开
+  { 147, 110, 109,  25 },   // 8 抬起
   {  90,  90,  90,  90 }    // 9 回中
 };
 
-// —— 物体 B（笔）——
+// —— 物体 B（笔）—— 2026-10-15 实测记录
 const byte SEQ_B[][4] = {
-  {  70,  80, 112, 100 },   // 1 取物位上方
-  {  70,  68,  98, 100 },   // 2 下降到取物位
-  {  70,  68,  98,  25 },   // 3 合爪夹紧
-  {  70,  80, 112,  25 },   // 4 抬起
-  { 160,  80, 112,  25 },   // 5 转到放置位上方
-  { 160,  68,  98,  25 },   // 6 下降到放置位
-  { 160,  68,  98, 100 },   // 7 张爪松开
-  { 160,  80, 112, 100 },   // 8 抬起
-  {  90,  90,  90,  90 }    // 9 回中
+  { 126,  80,  90,  39 },   // 1 取物位（爪张开）
+  { 126, 104,  90,  39 },   // 2 调整到取物姿态
+  { 126, 104,  90, 110 },   // 3 合爪夹紧
+  { 165, 104,  90, 110 },   // 4 抬起并转向放置位
+  { 174, 104,  90, 110 },   // 5 到达放置位上方
+  { 174, 104,  46,  86 },   // 6 下降到放置位并松开
+  { 174, 104,  46,  86 },   // 7 保持（原始记录与 #6 相同）
+  { 141,  21, 120,  90 },   // 8 回正前的过渡位
+  {  90,  90,  90,  90 }    // 9 回正中位
 };
 
-// —— 物体 C（自定义物体）——
+// —— 物体 A（橡皮）—— 2026-10-15 实测记录
 const byte SEQ_C[][4] = {
-  { 120,  85, 115, 100 },   // 1 取物位上方
-  { 120,  72, 100, 100 },   // 2 下降到取物位
-  { 120,  72, 100,  25 },   // 3 合爪夹紧
-  { 120,  85, 115,  25 },   // 4 抬起
-  {  10,  85, 115,  25 },   // 5 转到放置位上方
-  {  10,  72, 100,  25 },   // 6 下降到放置位
-  {  10,  72, 100, 100 },   // 7 张爪松开
-  {  10,  85, 115, 100 },   // 8 抬起
+  {  90,  90, 102,  25 },   // 1 取物位上方
+  {  90,  99,  84,  25 },   // 2 下降到取物位
+  {  90,  99,  84, 110 },   // 3 合爪夹紧
+  {  90,  99, 120, 110 },   // 4 抬起
+  {  18,  99, 112, 110 },   // 5 转到放置位上方
+  {  18,  99,  55, 110 },   // 6 下降到放置位
+  {  18,  99,  55,  41 },   // 7 张爪松开
+  {  18,  99, 118,  41 },   // 8 抬起
   {  90,  90,  90,  90 }    // 9 回中
 };
 
@@ -242,6 +247,19 @@ int   wayI = 0;        // 当前正前往的航点索引（从 0 开始；走完
 // 当前末端坐标（绘制过程中实时更新，暂停/继续/取消都靠它接得上）
 float curX = 0, curY = 0, curZ = 0;
 
+// —— 五点示教（任务五）——
+//  先摆 5 个位置、每摆一个发一次 'T' 记下来；再发 'F' 画折线 / 'W' 画平滑曲线。
+#define TEACH_N 5
+byte  teachPts[TEACH_N][4];     // 记下的 5 个姿态（四轴舵机角度）
+float teachXYZ[TEACH_N][3];     // 执行时把上面 5 个姿态正解成末端坐标
+int   teachCount = 0;
+
+// —— 平滑曲线模式 ——
+//  drawCurve = true 时 drawTick 不走航点表，而是按参数 t∈[0,1] 实时算点。
+bool  drawCurve = false;
+float drawT     = 0.0f;         // 当前参数 0..1
+float drawDT    = 0.0f;         // 每步增量
+
 
 void setup() {
 
@@ -274,6 +292,11 @@ void setup() {
   Serial.begin(9600);  //串口波特率
   Serial.println(F("Start!"));
   Serial.println(F("Command Ready / Joystick ON"));
+  Serial.println(F("Task5: 0=pos 1=line 2=N 6=tri 7=Z 8=V"));
+  Serial.println(F("       3=pause 4=go 5=cancel"));
+  Serial.println(F("       T=teach Y=clear F=polyline W=smooth"));
+  Serial.println(F("Coord: x<n>,y<n>,z<n>  (x=base y=rArm z=fArm)"));
+  Serial.println(F("Speed: H=faster  L=slower  (prints DSD=..)"));
 
 }
 
@@ -309,16 +332,8 @@ void armDataCmd(char serialCmd) {
   if(serialCmd == 'b' || serialCmd == 'r' || serialCmd == 'f' || serialCmd == 'c') {
     servoData = Serial.parseInt();
     servoCmd(serialCmd,servoData,DSD);
-  } else if(serialCmd == 'x') {
-    servoData = Serial.parseInt();
-    servoCmd('b',servoData,DSD);
-    servoData = Serial.parseInt();
-    servoCmd('r',servoData,DSD);
-    servoData = Serial.parseInt();
-    servoCmd('f',servoData,DSD);
-    char clear;
-    while(Serial.available()>0) clear = Serial.read();
-    Serial.println();
+  } else if(serialCmd == 'x' || serialCmd == 'X') {
+    coordCmd();
   } else {
     switch(serialCmd) {
 
@@ -332,27 +347,19 @@ void armDataCmd(char serialCmd) {
         clawPos = clawMin;
         servoCmd('c',clawPos,DSD);
         break;
-      case 'H': //提升机械臂整体运行速度
-        Serial.println(F("Received Command:Speed Higher"));
-        DSD -= 3;
-        if(DSD <= 9) {
-          DSD = 9;
-          Serial.println(F("Servo Speed is Too High."));
-        } else if(DSD >= 45) {
-          DSD = 45;
-          Serial.println(F("Servo Speed is Too Low."));
-        }
+      case 'H': //提升机械臂整体运行速度（DSD 是"每度延迟"，越小越快）
+        if(DSD > DSD_MIN) DSD -= DSD_STEP;
+        if(DSD < DSD_MIN) DSD = DSD_MIN;
+        Serial.print(F("Received Command:Speed Higher. DSD="));
+        Serial.println(DSD);
+        if(DSD == DSD_MIN) Serial.println(F("+Already at the fastest."));
         break;
       case 'L': //降低机械臂整体运行速度
-        Serial.println(F("Received Command:Speed Lower"));
-        DSD += 3;
-        if(DSD <= 9) {
-          DSD = 9;
-          Serial.println(F("Servo Speed is Too High."));
-        } else if(DSD >= 45) {
-          DSD = 45;
-          Serial.println(F("Servo Speed is Too Low."));
-        }
+        if(DSD < DSD_MAX) DSD += DSD_STEP;
+        if(DSD > DSD_MAX) DSD = DSD_MAX;
+        Serial.print(F("Received Command:Speed Lower. DSD="));
+        Serial.println(DSD);
+        if(DSD == DSD_MAX) Serial.println(F("+Already at the slowest."));
         break;
 
       case 'M': //摇杆使能开关（关掉后手臂只认串口指令，防止演示时误碰摇杆）
@@ -397,16 +404,27 @@ void armDataCmd(char serialCmd) {
 
       // ---- 任务五：轨迹绘制 ----
       //  '0' 打印当前末端坐标（正解自检，标定时靠它对方向）
-      //  '1' 画预设直线：在 y=0 平面上画 x=60 -> 160 的直线
-      //  '3' 暂停     '4' 继续     '5' 取消
-      //  '2' 留给下一关（基础图形 N/△/Z/V）
+      //  '1' 画预设直线：在 y=0 平面上画 x=80 -> 170 的直线
+      //  '2' 画 N    '6' 画 △    '7' 画 Z    '8' 画 V
+      //  '3' 暂停    '4' 继续     '5' 取消
+      //  'T' 记一个示教点（共 5 个）  'Y' 清空示教点
+      //  'F' 用 5 点画折线           'W' 用 5 点画平滑曲线
       case '0':
         printForwardKinematics();
         break;
       case '1':
         Serial.println(F("Received Command:Draw Line"));
-        drawLine(60.0f, 0.0f, 160.0f, 0.0f);
+        // 起点取 x=80：再往里 ρ 会掉到最小半径 53 以下，逆解必失败。
+        drawLine(80.0f, 0.0f, 170.0f, 0.0f);
         break;
+      case '2': drawShape('N'); break;
+      case '6': drawShape('T'); break;
+      case '7': drawShape('Z'); break;
+      case '8': drawShape('V'); break;
+      case 'T': teachRecord();   break;
+      case 'Y': teachClear();    break;
+      case 'F': runTeach(false); break;
+      case 'W': runTeach(true);  break;
       case '3':
         drawPause();
         break;
@@ -592,10 +610,10 @@ void armIniPos() {
 void moveAll(int tb, int tr, int tf, int tc) {
 
   // 限位保护：填错数字超过范围时，先提醒你，再夹回边界
-  if (tb < baseMin || tb > baseMax) Serial.println(F("+Warning: 序列里 base 角度超限，已夹到边界"));
-  if (tr < rArmMin || tr > rArmMax) Serial.println(F("+Warning: 序列里 rArm 角度超限，已夹到边界"));
-  if (tf < fArmMin || tf > fArmMax) Serial.println(F("+Warning: 序列里 fArm 角度超限，已夹到边界"));
-  if (tc < clawMin || tc > clawMax) Serial.println(F("+Warning: 序列里 claw 角度超限，已夹到边界"));
+  if (tb < baseMin || tb > baseMax) Serial.println(F("+Warning: base 目标角度超限，已夹到边界"));
+  if (tr < rArmMin || tr > rArmMax) Serial.println(F("+Warning: rArm 目标角度超限，已夹到边界"));
+  if (tf < fArmMin || tf > fArmMax) Serial.println(F("+Warning: fArm 目标角度超限，已夹到边界"));
+  if (tc < clawMin || tc > clawMax) Serial.println(F("+Warning: claw 目标角度超限，已夹到边界"));
 
   tb = constrain(tb, baseMin, baseMax);
   tr = constrain(tr, rArmMin, rArmMax);
@@ -636,6 +654,50 @@ void moveAll(int tb, int tr, int tf, int tc) {
   rArmPos = tr;
   fArmPos = tf;
   clawPos = tc;
+}
+
+
+// ------------------------------------------------------------
+//  coordCmd —— 任务一（附加）：多舵机协同控制
+//
+//  上位机发送：  x<角度>,y<角度>,z<角度>        例：x10,y30,z20
+//
+//  x / y / z 与舵机的对应关系（自行定义）：
+//      x -> base （底座回转）
+//      y -> rArm （后臂）
+//      z -> fArm （前臂）
+//  夹爪不参与，保持当前位置不动。
+//
+//  ⚠ 三个轴是【同时】出发、同时到达的（底层走 moveAll 的比例插值），
+//     不是三个 servoCmd 串起来一个个走 —— 任务书要求「单条指令同步控制三个舵机」。
+//
+//  解析为什么不用自己切逗号：
+//     Serial.parseInt() 会【自动跳过所有非数字字符】再读一个整数。
+//     所以 "x10,y30,z20" 里被读走 'x' 之后，
+//     连续三次 parseInt 依次拿到 10 / 30 / 20，中间的 ',' 'y' ',' 'z' 全被自动跳掉。
+// ------------------------------------------------------------
+void coordCmd() {
+  int vx = Serial.parseInt();
+  int vy = Serial.parseInt();
+  int vz = Serial.parseInt();
+
+  // 吃掉行尾残留的 '\r' '\n'，否则会被当成下一条命令
+  char clear;
+  while(Serial.available() > 0) clear = Serial.read();
+
+  Serial.print(F("+Coord  x(base)="));  Serial.print(vx);
+  Serial.print(F("  y(rArm)="));       Serial.print(vy);
+  Serial.print(F("  z(fArm)="));       Serial.println(vz);
+
+  // 单条指令，同时驱动三个舵机
+  moveAll(vx, vy, vz, clawPos);
+
+  // 回读四个舵机【实际】停在的角度，方便上位机核对
+  Serial.print(F("+Servo  x/base="));  Serial.print(base.read());
+  Serial.print(F("  y/rArm="));        Serial.print(rArm.read());
+  Serial.print(F("  z/fArm="));        Serial.print(fArm.read());
+  Serial.print(F("  claw="));          Serial.println(claw.read());
+  Serial.print(F("+DSD="));            Serial.println(DSD);
 }
 
 
@@ -971,8 +1033,10 @@ bool inverseKinematics(float x, float y, float z,
   float zp = z - ARM_H;
   float rho = sqrt(r*r + zp*zp);
 
-  // 可达判据
-  if(rho < ARM_L1 - ARM_LF || rho > ARM_L1 + ARM_LF) return false;
+  // 可达判据：|L1 - Lf| ≤ ρ ≤ L1 + Lf
+  // ⚠ 下限必须取 fabs —— Lf(133) > L1(80) 时 L1-Lf 是负数(-53)，
+  //    不取绝对值的话下限判据恒不成立、等于失效。
+  if(rho < fabs(ARM_L1 - ARM_LF) || rho > ARM_L1 + ARM_LF) return false;
 
   float c3 = (rho*rho - ARM_L1*ARM_L1 - ARM_LF*ARM_LF) /
              (2.0f * ARM_L1 * ARM_LF);
@@ -1030,9 +1094,32 @@ bool moveTo(float x, float y, float z) {
     Serial.print(z); Serial.println(F(")"));
     return false;
   }
-  basePos = (int)th2servoBase(t1);
-  rArmPos = (int)th2servoRarm(t2);
-  fArmPos = (int)th2servoFarm(t3);
+  int ab = (int)th2servoBase(t1);
+  int ar = (int)th2servoRarm(t2);
+  int af = (int)th2servoFarm(t3);
+
+  // —— 必须钳位 + 报警 ——
+  // 目标点【几何上可达】（ρ 落在 53~213 内）不等于【舵机摆得到】：
+  // 算出来的关节角一旦超出舵机行程，绝大多数情况是那 6 个标定常量还没填。
+  // 不钳位的话，负角度会被 Servo::write() 当成 0°，舵机直接顶死机械限位、堵转发烫。
+  // 报警做 2 秒限流 —— 画线时每 30 ms 就会调一次这里，不限流会刷屏。
+  if(ab < baseMin || ab > baseMax ||
+     ar < rArmMin || ar > rArmMax ||
+     af < fArmMin || af > fArmMax) {
+    static unsigned long lastWarn = 0;
+    if(millis() - lastWarn > 2000) {
+      lastWarn = millis();
+      Serial.print(F("+Angle out of range! base="));  Serial.print(ab);
+      Serial.print(F(" rArm="));                      Serial.print(ar);
+      Serial.print(F(" fArm="));                      Serial.println(af);
+      Serial.println(F("+ 多半是任务五标定还没做 -> 任务五操作手册.md 第 1 节"));
+    }
+    ab = constrain(ab, baseMin, baseMax);
+    ar = constrain(ar, rArmMin, rArmMax);
+    af = constrain(af, fArmMin, fArmMax);
+  }
+
+  basePos = ab; rArmPos = ar; fArmPos = af;
   curX = x; curY = y; curZ = z;
   return true;
 }
@@ -1058,6 +1145,7 @@ void drawLine(float x1, float y1, float x2, float y2) {
   way[0].x = x2;  way[0].y = y2;  way[0].z = penZDown;
   wayN = 1;  wayI = 0;
   curX = x1; curY = y1; curZ = penZDown;
+  drawCurve = false;               // 直线走航点模式
   drawState = DRAW_RUN;
   Serial.println(F("+DRAW RUN"));
 }
@@ -1080,6 +1168,22 @@ void drawTick() {
   unsigned long now = millis();
   if(now - lastMs < DRAW_STEP_MS) return;
   lastMs = now;
+
+  // —— 平滑曲线模式：按参数 t 实时算点（不走航点表）——
+  if(drawCurve) {
+    drawT += drawDT;
+    if(drawT >= 1.0f) {
+      moveToSync(curX, curY, penZUp);
+      drawCurve = false;
+      drawState = DRAW_DONE;
+      Serial.println(F("+DRAW DONE"));
+      return;
+    }
+    float nx, ny, nz;
+    catmullRom(drawT, nx, ny, nz);
+    if(!moveTo(nx, ny, nz)) { drawCancel(); return; }
+    return;
+  }
 
   // 全部航点走完了 -> 抬笔、状态转 DONE
   if(wayI >= wayN) {
@@ -1140,7 +1244,221 @@ void drawResume() {
 // ------------------------------------------------------------
 void drawCancel() {
   wayN = 0;  wayI = 0;
+  drawCurve = false;
   drawState = DRAW_IDLE;
   moveToSync(curX, curY, penZUp);    // 抬笔（在 penZDown 的话抬起来）
   Serial.println(F("+DRAW CANCEL"));
+}
+
+
+// ============================================================
+//  任务五：基础图形（N / △ / Z / V）
+// ============================================================
+
+// ------------------------------------------------------------
+//  drawPolyline —— 通用折线：给定一串顶点，一笔画出来
+//
+//  和 drawLine 的区别：drawLine 只画一段（1 个航点），
+//  drawPolyline 能画任意多段（n 个顶点 -> n-1 段），中途不抬笔。
+//  基础图形 N/△/Z/V 就是用它画的。
+// ------------------------------------------------------------
+void drawPolyline(const WayPt *pts, int n) {
+  if(n < 2 || n > MAX_WAY) {
+    Serial.println(F("! bad polyline point count"));
+    return;
+  }
+
+  // 抬笔到起点上方，再下笔
+  if(!moveToSync(pts[0].x, pts[0].y, penZUp))   return;
+  if(!moveToSync(pts[0].x, pts[0].y, penZDown)) return;
+
+  // 装载航点，交给 drawTick 非阻塞地走
+  for(int i = 0; i < n; i++) way[i] = pts[i];
+  wayN = n;  wayI = 0;
+  curX = pts[0].x;  curY = pts[0].y;  curZ = penZDown;
+  drawCurve = false;
+  drawState = DRAW_RUN;
+  Serial.println(F("+DRAW RUN"));
+}
+
+
+// ------------------------------------------------------------
+//  drawShape —— '2' / '6' / '7' / '8'：画基础图形
+//
+//  图形都画在中心 (100, 0) 附近，x∈[70,130]、y∈[-30,30]。
+//  标称连杆参数下这些点的 ρ 约 70~123，稳稳落在可达区间 [53,213]。
+//  ⚠ 若笔尖高度 penZDown 标定后与占位值 30 差很多，可达性要重核一遍。
+// ------------------------------------------------------------
+void drawShape(char which) {
+  WayPt p[4];
+  int n = 0;
+
+  switch(which) {
+    case 'N':                       // 两竖 + 一斜
+      p[0].x =  70; p[0].y = -30; p[0].z = penZDown;
+      p[1].x =  70; p[1].y =  30; p[1].z = penZDown;
+      p[2].x = 130; p[2].y = -30; p[2].z = penZDown;
+      p[3].x = 130; p[3].y =  30; p[3].z = penZDown;
+      n = 4;
+      break;
+    case 'T':                       // △ 三角形（回到起点闭合）
+      p[0].x = 100; p[0].y =  35; p[0].z = penZDown;
+      p[1].x =  70; p[1].y = -30; p[1].z = penZDown;
+      p[2].x = 130; p[2].y = -30; p[2].z = penZDown;
+      p[3].x = 100; p[3].y =  35; p[3].z = penZDown;
+      n = 4;
+      break;
+    case 'Z':                       // 上横 + 斜 + 下横
+      p[0].x =  70; p[0].y =  30; p[0].z = penZDown;
+      p[1].x = 130; p[1].y =  30; p[1].z = penZDown;
+      p[2].x =  70; p[2].y = -30; p[2].z = penZDown;
+      p[3].x = 130; p[3].y = -30; p[3].z = penZDown;
+      n = 4;
+      break;
+    case 'V':                       // 左上一撇 + 右上一捺
+      p[0].x =  70; p[0].y =  30; p[0].z = penZDown;
+      p[1].x = 100; p[1].y = -30; p[1].z = penZDown;
+      p[2].x = 130; p[2].y =  30; p[2].z = penZDown;
+      n = 3;
+      break;
+    default:
+      Serial.println(F("! unknown shape"));
+      return;
+  }
+
+  Serial.print(F("+Draw shape "));
+  Serial.println(which);
+  drawPolyline(p, n);
+}
+
+
+// ============================================================
+//  任务五：五点示教（折线 / 平滑曲线）
+// ============================================================
+
+// 'T'：记一个示教点（把当前四轴角度存下来）
+void teachRecord() {
+  if(teachCount >= TEACH_N) {
+    Serial.println(F("! teach full (5). send Y to clear"));
+    return;
+  }
+  teachPts[teachCount][0] = basePos;
+  teachPts[teachCount][1] = rArmPos;
+  teachPts[teachCount][2] = fArmPos;
+  teachPts[teachCount][3] = clawPos;
+  teachCount++;
+
+  Serial.print(F("+Teach #"));
+  Serial.print(teachCount);
+  Serial.print(F(" { "));
+  Serial.print(basePos); Serial.print(F(", "));
+  Serial.print(rArmPos); Serial.print(F(", "));
+  Serial.print(fArmPos); Serial.print(F(", "));
+  Serial.print(clawPos);
+  Serial.println(F(" }"));
+}
+
+// 'Y'：清空示教点
+void teachClear() {
+  teachCount = 0;
+  Serial.println(F("+Teach cleared"));
+}
+
+
+// ------------------------------------------------------------
+//  runTeach —— 'F' 画折线 / 'W' 画平滑曲线
+//
+//  先把 5 个示教姿态【正解】成末端坐标（存进 teachXYZ），然后：
+//    折线 -> 5 个坐标直接当航点，交给 drawTick 一段段走（复用现成机制）
+//    曲线 -> 记下总步数，drawTick 每步按参数 t 调 catmullRom 实时算点
+// ------------------------------------------------------------
+void runTeach(bool smooth) {
+  if(teachCount < TEACH_N) {
+    Serial.print(F("! need 5 teach points, now "));
+    Serial.println(teachCount);
+    return;
+  }
+
+  // 5 个姿态 -> 末端坐标（几何正解），顺便累加总弧长用来定步数
+  float totalLen = 0;
+  for(byte i = 0; i < TEACH_N; i++) {
+    float t1 = servo2thBase(teachPts[i][0]);
+    float t2 = servo2thRarm(teachPts[i][1]);
+    float t3 = servo2thFarm(teachPts[i][2]);
+    float R  = ARM_L1 * cos(t2) + ARM_LF * cos(t2 + t3);
+
+    teachXYZ[i][0] = (ARM_D + R) * cos(t1);
+    teachXYZ[i][1] = (ARM_D + R) * sin(t1);
+    teachXYZ[i][2] = ARM_H + ARM_L1 * sin(t2) + ARM_LF * sin(t2 + t3);
+
+    if(i > 0) {
+      float dx = teachXYZ[i][0] - teachXYZ[i-1][0];
+      float dy = teachXYZ[i][1] - teachXYZ[i-1][1];
+      float dz = teachXYZ[i][2] - teachXYZ[i-1][2];
+      totalLen += sqrt(dx*dx + dy*dy + dz*dz);
+    }
+  }
+
+  if(smooth) {
+    // 平滑曲线：参数化，drawTick 里每步现算
+    int steps = (int)(totalLen / DRAW_STEP_MM);
+    if(steps < 20) steps = 20;
+    drawDT    = 1.0f / (float)steps;
+    drawT     = 0.0f;
+    drawCurve = true;
+    curX = teachXYZ[0][0];  curY = teachXYZ[0][1];  curZ = teachXYZ[0][2];
+    drawState = DRAW_RUN;
+    Serial.println(F("+DRAW CURVE RUN (5 pts, smooth)"));
+  } else {
+    // 折线：5 个坐标就是 5 个航点
+    for(byte i = 0; i < TEACH_N; i++) {
+      way[i].x = teachXYZ[i][0];
+      way[i].y = teachXYZ[i][1];
+      way[i].z = teachXYZ[i][2];
+    }
+    wayN = TEACH_N;  wayI = 0;
+    curX = teachXYZ[0][0];  curY = teachXYZ[0][1];  curZ = teachXYZ[0][2];
+    drawCurve = false;
+    drawState = DRAW_RUN;
+    Serial.println(F("+DRAW POLYLINE RUN (5 pts)"));
+  }
+}
+
+
+// ------------------------------------------------------------
+//  catmullRom —— 参数 t∈[0,1] 取平滑曲线上一点
+//
+//  Catmull-Rom 样条：曲线【过】所有示教点，且在点处切线连续。
+//  5 个点定出 4 段，第 k 段由 P[k-1..k+2] 四点插值。
+//  两端没有邻居就拿端点自己顶上（P[-1]=P[0]、P[5]=P[4]）。
+// ------------------------------------------------------------
+void catmullRom(float t, float &ox, float &oy, float &oz) {
+  float fseg = t * (TEACH_N - 1);            // 0 .. 4
+  int   seg  = (int)fseg;
+  if(seg > TEACH_N - 2) seg = TEACH_N - 2;   // 最右夹到第 3 段
+  float u = fseg - seg;                      // 段内 0..1
+
+  int i1 = seg, i2 = seg + 1;
+  int i0 = (i1 > 0)           ? i1 - 1 : 0;
+  int i3 = (i2 < TEACH_N - 1) ? i2 + 1 : TEACH_N - 1;
+
+  float u2 = u * u, u3 = u2 * u;
+
+  float p0[3], p1[3], p2[3], p3[3];
+  for(byte k = 0; k < 3; k++) {
+    p0[k] = teachXYZ[i0][k];
+    p1[k] = teachXYZ[i1][k];
+    p2[k] = teachXYZ[i2][k];
+    p3[k] = teachXYZ[i3][k];
+  }
+
+  float v[3];
+  for(byte k = 0; k < 3; k++) {
+    v[k] = 0.5f * ( 2.0f * p1[k]
+                  + (-p0[k] + p2[k]) * u
+                  + (2.0f*p0[k] - 5.0f*p1[k] + 4.0f*p2[k] - p3[k]) * u2
+                  + (-p0[k] + 3.0f*p1[k] - 3.0f*p2[k] + p3[k]) * u3 );
+  }
+
+  ox = v[0];  oy = v[1];  oz = v[2];
 }
