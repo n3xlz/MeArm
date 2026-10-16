@@ -61,7 +61,8 @@ int moveStep = 3;
 //  一个"姿态" = 四个关节的角度，顺序固定为：{ base, rArm, fArm, claw }
 //  一个"动作序列" = 若干个姿态，机械臂按顺序一个一个走过去。
 //
-//  claw：值大 = 张开（clawMax = 110）；值小 = 夹紧（clawMin = 25）
+//  claw：值大 = 夹紧（clawMax = 120）；值小 = 张开（clawMin = 25）
+//        （2026-10-16 上机实测确认：发 'O' 爪子闭合 → 舵机角度大的那一端才是夹紧端）
 //
 //  ✅ SEQ_A / SEQ_B / SEQ_C 的数值全部为 2026-10-15 实测记录，各 9 位，末位都是回中。
 //
@@ -329,14 +330,14 @@ void armDataCmd(char serialCmd) {
   } else {
     switch(serialCmd) {
 
-      case 'O': //机械臂爪子张开
+      case 'O': //机械臂爪子张开（张开端 = 角度小的一端，故取 clawMin）
         Serial.println(F("Received Command:Claw Open"));
-        clawPos = clawMax;
+        clawPos = clawMin;
         servoCmd('c',clawPos,DSD);
         break;
-      case 'S': //机械臂爪子关闭
+      case 'S': //机械臂爪子关闭（夹紧端 = 角度大的一端，故取 clawMax）
         Serial.println(F("Received Command:Claw Close"));
-        clawPos = clawMin;
+        clawPos = clawMax;
         servoCmd('c',clawPos,DSD);
         break;
       case 'H': //提升机械臂整体运行速度（DSD 是"每度延迟"，越小越快）

@@ -208,7 +208,7 @@ $$\sigma_i=\mathrm{sgn}\!\left(\frac{a_i^{(2)}-a_i^{(1)}}{\theta_i^{(2)}-\theta_
 | $\theta_1$ | `base` | D11 | $0^{\circ}\sim 180^{\circ}$ |
 | $\theta_2$ | `rArm` | D10 | $20^{\circ}\sim 110^{\circ}$ |
 | $\theta_3$ | `fArm` | D9 | $40^{\circ}\sim 130^{\circ}$ |
-| 夹爪 | `claw` | D5 | $25^{\circ}\sim 100^{\circ}$ |
+| 夹爪 | `claw` | D5 | $25^{\circ}\sim 120^{\circ}$ |
 
 逆解算出的关节角经上式转换为舵机角度后，再用表 5-1 的行程范围做限幅校验；若越限，则该目标点在本机实际不可达。
 

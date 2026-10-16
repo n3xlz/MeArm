@@ -28,7 +28,7 @@ meArm 官方命名（`arm.begin(basePin, shoulderPin, elbowPin, gripperPin)`）�
 | `base` | 底座     | base         | D11 | 0 ~ 180  | 绕竖直轴水平旋转整个手臂  |
 | `rArm` | **后臂** | **shoulder** | D10 | 20 ~ 110 | 俯仰：驱动靠近底座的那一段 |
 | `fArm` | **前臂** | **elbow**    | D9  | 40 ~ 130 | 俯仰：驱动靠近爪子的那一段 |
-| `claw` | 爪子     | gripper      | D5  | 25 ~ 110 | 开合            |
+| `claw` | 爪子     | gripper      | D5  | 25 ~ 120 | 开合            |
 
 > 记忆口诀：**肩膀管后臂，肘管前臂**。  
 > 几何依据：shoulder 舵机装在底座立柱顶端，舵盘驱动第一段（离底座近）= 后臂；  
@@ -50,8 +50,8 @@ meArm 官方命名（`arm.begin(basePin, shoulderPin, elbowPin, gripperPin)`）�
 | `f` | `f<角度>`          | 前臂转到指定角度                    |
 | `c` | `c<角度>`          | 爪子转到指定角度                    |
 | `x` | `x<a>,y<b>,z<c>` | **同步**控制三个舵机（x=底座 / y=后臂 / z=前臂），执行后回读实际角度 |
-| `O` | `O`              | 爪子张开（到 `clawMax`）           |
-| `S` | `S`              | 爪子合上（到 `clawMin`）           |
+| `O` | `O`              | 爪子张开（到 `clawMin`）           |
+| `S` | `S`              | 爪子合上（到 `clawMax`）           |
 | `H` | `H`              | 提速：`DSD - 5`（下限 5），回显 `DSD=..` |
 | `L` | `L`              | 减速：`DSD + 5`（上限 60），回显 `DSD=..` |
 | `?` | `?`              | 打印当前四个舵机的角度                 |
