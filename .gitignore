@@ -9,6 +9,9 @@ build/
 *.bin
 *.map
 
+# 任务五 PC 测试台的生成文件
+DevTools/test_task5/gen/
+
 # 编辑器临时文件
 *.swp
 *.swo
