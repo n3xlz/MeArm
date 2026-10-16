@@ -71,11 +71,11 @@ int moveStep = 3;
 // —— 物体 A（三枚硬币）—— 2026-10-15 实测记录
 const byte SEQ_A[][4] = {
   {  90, 110, 108,  54 },   // 1 取物位上方（爪张开）
-  {  90, 110,  85,  54 },   // 2 下降到取物位
-  {  90, 110,  85,  115 },   // 3 合爪夹紧
-  {  90, 110, 105,  115 },   // 4 抬起（保持夹紧）
-  { 147, 110, 105,  115 },   // 5 转到放置位上方
-  { 147, 110,  40,  115 },   // 6 下降到放置位
+  {  90, 110,  85,  90 },   // 2 下降到取物位
+  {  90, 110,  85,  120 },   // 3 合爪夹紧
+  {  90, 110, 105,  120 },   // 4 抬起（保持夹紧）
+  { 147, 110, 105,  120 },   // 5 转到放置位上方
+  { 147, 110,  40,  120 },   // 6 下降到放置位
   { 147, 110,  40,  25 },   // 7 张爪松开
   { 147, 110, 109,  25 },   // 8 抬起
   {  90,  90,  90,  90 }    // 9 回中
@@ -94,14 +94,14 @@ const byte SEQ_B[][4] = {
   {  90,  90,  90,  90 }    // 9 回正中位
 };
 
-// —— 物体 A（橡皮）—— 2026-10-15 实测记录
+// —— 物体 C（橡皮）—— 2026-10-15 实测记录
 const byte SEQ_C[][4] = {
   {  90,  90, 102,  25 },   // 1 取物位上方
   {  90,  99,  84,  25 },   // 2 下降到取物位
-  {  90,  99,  84, 110 },   // 3 合爪夹紧
-  {  90,  99, 120, 110 },   // 4 抬起
-  {  18,  99, 112, 110 },   // 5 转到放置位上方
-  {  18,  99,  55, 110 },   // 6 下降到放置位
+  {  90,  99,  84, 120 },   // 3 合爪夹紧
+  {  90,  99, 120, 120 },   // 4 抬起
+  {  18,  99, 112, 120 },   // 5 转到放置位上方
+  {  18,  99,  55, 120 },   // 6 下降到放置位
   {  18,  99,  55,  41 },   // 7 张爪松开
   {  18,  99, 118,  41 },   // 8 抬起
   {  90,  90,  90,  90 }    // 9 回中
@@ -159,17 +159,39 @@ const byte BTN_PIN[2] = { 2, 4 };            // [0]=左摇杆按键  [1]=右摇�
 
 const unsigned long BTN_DEBOUNCE_MS = 25;    // 消抖：电平要稳定这么久才算数
 const unsigned long BTN_DOUBLE_MS   = 350;   // 双击窗口：两次点击间隔小于它算双击
+const unsigned long BTN_LONG_MS     = 1000;  // 长按阈值：按住超过它算长按
 
-// 每个按键的状态（判断单击 / 双击要用到的几个量）
+// 每个按键的状态（判断单击 / 双击 / 长按要用到的几个量）
 struct BtnState {
   bool          lastRaw;   // 上一次读到的原始电平
   bool          stable;    // 消抖后确认的稳定电平（LOW = 按着）
   unsigned long chgMs;     // 电平开始变化的时刻（消抖计时用）
   byte          clicks;    // 已经累计了几次点击
   unsigned long relMs;     // 最后一次松手的时刻（双击窗口计时用）
+  unsigned long pressMs;   // 本次按下的时刻（长按计时用）
+  bool          longFired; // 这一次按下的长按是否已经触发过
 };
 
 BtnState btn[2];
+
+
+// ============================================================
+//  UI 模式 —— 把任务三和任务五的按键彻底隔开
+// ------------------------------------------------------------
+//  摇杆只有 2 个按键，单击/双击/长按最多凑 6 种手势；
+//  而任务三要 4 个功能、任务五要 6 个功能，抢不过来。
+//
+//  解法：按"模式"分发 —— 两套功能永远不会同时用，所以：
+//    UI_TASK3  左单=循环夹取  右单=录制  左双=播放  右双=回中
+//    UI_TASK5  示教态  左单=记示教点  左双=清空  右单=折线  右双=曲线
+//              绘制态  左单=暂停/继续            左双=取消
+//
+//  切换方式：长按左键 1 秒，或串口发 'm'。两种都会回显当前模式。
+//  为什么这样设计见 DEVLOG.md 2026-10-16。
+// ============================================================
+const byte UI_TASK3 = 0;
+const byte UI_TASK5 = 1;
+byte uiMode = UI_TASK3;          // 开机默认任务三模式
 
 
 // ============================================================
@@ -285,6 +307,8 @@ void setup() {
   Serial.begin(9600);  //串口波特率
   Serial.println(F("Start!"));
   Serial.println(F("Command Ready / Joystick ON"));
+  printUiMode();
+  Serial.println(F("       left-hold 1s or send 'm' = switch UI mode"));
   Serial.println(F("Task5: 0=pos 1=line 2=N 6=tri 7=Z 8=V"));
   Serial.println(F("       3=pause 4=go 5=cancel"));
   Serial.println(F("       T=teach Y=clear F=polyline W=smooth"));
@@ -359,6 +383,11 @@ void armDataCmd(char serialCmd) {
         joyOn = !joyOn;
         Serial.print(F("Joystick "));
         Serial.println(joyOn ? F("ON") : F("OFF"));
+        break;
+      case 'm': //切换 UI 模式：任务三 <-> 任务五（长按左键同效）
+        uiMode = (uiMode == UI_TASK3) ? UI_TASK5 : UI_TASK3;
+        printUiMode();
+        resetButtons();
         break;
       case '?':
         reportStatus();
@@ -856,15 +885,26 @@ void scanButtons() {
     if(now - btn[i].chgMs >= BTN_DEBOUNCE_MS && raw != btn[i].stable) {
       btn[i].stable = raw;
       if(raw == LOW) {
-        btn[i].clicks++;         // 按下一次
+        btn[i].clicks++;          // 按下一次
+        btn[i].pressMs   = now;   // 长按从这里开始计时
+        btn[i].longFired = false;
       } else {
-        btn[i].relMs = now;      // 松手：双击窗口从这一刻开始倒计时
+        btn[i].relMs = now;       // 松手：双击窗口从这一刻开始倒计时
+        if(btn[i].longFired) btn[i].clicks = 0;   // 已按成长按，不再算点击
       }
     }
 
-    // ③ 手已松开、窗口也走完了 —— 现在才能确定是单击还是双击
+    // ③ 按住不放够久 -> 长按（触发后锁住，松手不会再补一次单击）
+    if(btn[i].stable == LOW && !btn[i].longFired &&
+       now - btn[i].pressMs >= BTN_LONG_MS) {
+      btn[i].longFired = true;
+      btn[i].clicks    = 0;
+      onButtonLong(i);
+    }
+
+    // ④ 手已松开、窗口也走完了 —— 现在才能确定是单击还是双击
     if(btn[i].clicks > 0 && btn[i].stable == HIGH &&
-       now - btn[i].relMs >= BTN_DOUBLE_MS) {
+       !btn[i].longFired && now - btn[i].relMs >= BTN_DOUBLE_MS) {
       byte n = btn[i].clicks;
       btn[i].clicks = 0;                       // 清掉，准备下一次
       if(n == 1) onButton(i, false);           // 一次点击 -> 单击
@@ -892,18 +932,97 @@ void onButton(byte idx, bool isDouble) {
   if(isDouble) Serial.println(F("DOUBLE"));
   else         Serial.println(F("SINGLE"));
 
-  if(idx == 0 && !isDouble) {          // 左单击 = 按键1
-    cyclePickPlace();
+  // ----------------------------------------------------------
+  //  UI_TASK3 —— 任务三的 4 个按键（循环夹取 / 录制 / 播放 / 回中）
+  // ----------------------------------------------------------
+  if(uiMode == UI_TASK3) {
+    if(idx == 0 && !isDouble) {          // 左单击 = 按键1
+      cyclePickPlace();
+      resetButtons();
+    } else if(idx == 1 && !isDouble) {   // 右单击 = 按键2（非阻塞，不用清）
+      toggleRecord();
+    } else if(idx == 0 && isDouble) {    // 左双击 = 按键3
+      playRecord();
+      resetButtons();
+    } else {                             // 右双击 = 按键4
+      armIniPos();
+      resetButtons();
+    }
+    return;
+  }
+
+  // ----------------------------------------------------------
+  //  UI_TASK5 —— 任务五的按键
+  //
+  //  按【当前正在绘制与否】自动分两组，原因：
+  //    · 绘制中只需要 暂停/继续/取消，摇杆本来就被 loop 禁掉了；
+  //    · 示教时（空闲）才需要 记点 / 清空 / 启动绘制。
+  //  两组永远不会同时用到，所以 4 个手势刚好够。
+  // ----------------------------------------------------------
+  bool drawing = (drawState == DRAW_RUN || drawState == DRAW_PAUSE);
+
+  if(drawing) {
+    // —— 绘制中：左键管 暂停/继续/取消 ——
+    if(idx == 0 && !isDouble) {                 // 左单击 = 暂停 / 继续（按当前状态自动）
+      if(drawState == DRAW_RUN) drawPause();
+      else                      drawResume();
+    } else if(idx == 0 && isDouble) {           // 左双击 = 取消
+      drawCancel();
+      resetButtons();
+    } else {
+      Serial.println(F("+Task5 drawing: LEFT single=pause/resume, LEFT double=cancel"));
+    }
+    return;
+  }
+
+  // —— 示教态（IDLE / DONE）——
+  if(idx == 0 && !isDouble) {                   // 左单击 = 记一个示教点
+    teachRecord();
+  } else if(idx == 0 && isDouble) {             // 左双击 = 清空示教点
+    teachClear();
     resetButtons();
-  } else if(idx == 1 && !isDouble) {   // 右单击 = 按键2（非阻塞，不用清）
-    toggleRecord();
-  } else if(idx == 0 && isDouble) {    // 左双击 = 按键3
-    playRecord();
+  } else if(idx == 1 && !isDouble) {            // 右单击 = 画折线
+    runTeach(false);
     resetButtons();
-  } else {                             // 右双击 = 按键4
-    armIniPos();
+  } else {                                      // 右双击 = 画平滑曲线
+    runTeach(true);
     resetButtons();
   }
+}
+
+
+// ------------------------------------------------------------
+//  onButtonLong —— 长按（按住超过 BTN_LONG_MS）
+//
+//  长按左键 = 切换 UI 模式（任务三 <-> 任务五）。
+//  只留这一个长按功能是有意的：长按最容易误触，只给"切模式"
+//  这种不会把机械臂弄乱的动作。
+// ------------------------------------------------------------
+void onButtonLong(byte idx) {
+  Serial.print(F("+KEY "));
+  if(idx == 0) Serial.print(F("LEFT "));
+  else         Serial.print(F("RIGHT "));
+  Serial.println(F("LONG"));
+
+  if(idx == 0) {                                // 长按左键 = 切模式
+    uiMode = (uiMode == UI_TASK3) ? UI_TASK5 : UI_TASK3;
+    printUiMode();
+  } else {                                      // 长按右键 = 打印状态（调试用）
+    reportStatus();
+  }
+  resetButtons();
+}
+
+
+// ------------------------------------------------------------
+//  printUiMode —— 回显当前 UI 模式，顺便提示这个模式下手势怎么用
+// ------------------------------------------------------------
+void printUiMode() {
+  Serial.print(F("+UI MODE = "));
+  if(uiMode == UI_TASK5)
+    Serial.println(F("Task5  [L单=记点 L双=清空 R单=折线 R双=曲线 | 绘制中 L单=暂停/继续 L双=取消]"));
+  else
+    Serial.println(F("Task3  [L单=循环夹取 R单=录制 L双=播放 R双=回中]"));
 }
 
 
@@ -916,11 +1035,13 @@ void onButton(byte idx, bool isDouble) {
 // ------------------------------------------------------------
 void resetButtons() {
   for(byte i = 0; i < 2; i++) {
-    btn[i].lastRaw = HIGH;
-    btn[i].stable  = HIGH;
-    btn[i].clicks  = 0;
-    btn[i].chgMs   = millis();
-    btn[i].relMs   = millis();
+    btn[i].lastRaw   = HIGH;
+    btn[i].stable    = HIGH;
+    btn[i].clicks    = 0;
+    btn[i].chgMs     = millis();
+    btn[i].relMs     = millis();
+    btn[i].pressMs   = millis();
+    btn[i].longFired = false;
   }
 }
 
